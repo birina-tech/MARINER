@@ -756,18 +756,23 @@ class MainWindow(QMainWindow):
         self.running = False
         self.timer.stop()
         
-        # Stop all active multi-agent workers
+        # Stop all active multi-agent workers safely
         if hasattr(self, 'llm_workers'):
             for worker in self.llm_workers.values():
-                if worker.isRunning():
-                    worker.stop()
-                    worker.wait(2000)
+                try:
+                    if worker.isRunning():
+                        worker.stop()
+                        worker.wait(2000)
+                except RuntimeError:
+                    # The C++ object was already deleted by deleteLater, so it's safely stopped.
+                    pass
             self.llm_workers.clear()
             
         self.llm_pending = False
         
         if self.recording:
             self.toggle_recording()
+            
         self.btn_start.setStyleSheet("""
             QPushButton {
                 background-color: #e0e0e0;
@@ -786,7 +791,6 @@ class MainWindow(QMainWindow):
         """)
         self.statusBar().showMessage("Simulation stopped")
         self.update_rec_button_state()
-
 
 
     def clear_ships(self):

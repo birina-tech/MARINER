@@ -9,7 +9,7 @@ import numpy as np
 
 
 class LLMCoordinator:
-    # Конфигурация провайдеров
+    # Providers' configuration
     PROVIDERS = {
         'ollama': {
             'name': 'Ollama (локально)',
