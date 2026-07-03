@@ -389,14 +389,14 @@ class MainWindow(QMainWindow):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
         
-        # Верхняя панель с кнопками
+        # Upper panel with buttons
         toolbar = QWidget()
         toolbar.setStyleSheet("background-color: #f0f0f0; border-bottom: 1px solid #cccccc;")
         toolbar_layout = QHBoxLayout(toolbar)
         toolbar_layout.setContentsMargins(10, 5, 10, 5)
         toolbar_layout.setSpacing(10)
         
-        # Серый стиль по умолчанию для всех кнопок
+        # Defualt button style
         default_style = """
             QPushButton {
                 background-color: #e0e0e0;

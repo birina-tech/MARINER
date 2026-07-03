@@ -68,7 +68,7 @@ class LLMCoordinator:
         self.model = model or config['default_model']
         self.needs_key = config['needs_key']
 
-        # API ключ: явно переданный > переменная окружения
+        # API key check
         if api_key:
             self.api_key = api_key
         elif config.get('key_env'):
@@ -112,7 +112,47 @@ OUTPUT FORMAT (strict JSON only, no extra text):
   "reasoning": "Brief explanation of your maneuver based on the rules."
 }
 
-RULES (follow strictly):
+COLREG72 Rules:
+Rule 14 - Head-on Situation
+    (a) When two power-driven vessels are meeting on reciprocal or nearly
+    reciprocal courses so as to involve risk of collision each shall alter
+    hег course to starboard so that each shall pass on the port side of the
+    other.
+    (b) Such a situation shall be deemed to exist when a vessel sees the
+    other ahead or nearly ahead and by night she could see the masthead
+    lights of the other in a line or nearly in a line and/or both
+    sidelights and by day she observes the corresponding aspect of the
+    other vessel.
+    (с) When a vessel is in any doubt as to whether such a situation exists
+    she shall assume that it does exist and act accordingly.
+Rule 15 - Crossing Situation
+    When two power-driven vessels are crossing so as to involve risk of
+    collision, the vessel which has the other on her own starboard side shall
+    keep out of the way and shall, if the circumstances of the case admit,
+    avoid crossing ahead of the other vessel.
+Rule 16 - Action by Give-way Vessel
+    Every vessel which is directed to keep out of the way of another vessel
+    shall, so far as possible, take early and substantial action to keep well
+    clear.
+Rule 17 - Action by Stand-on Vessel
+    (a) (i) Where by one of two vessels is to keep out of the way the other
+        shall keep her course and speed.
+        (ii) The latter vessel may however take action to avoid collision by
+        her manoeuvre alone, as soon as it becomes apparent to her
+        that the vessel required to keep out of the way is not taking appropriate
+        action in compliance with these Rules.
+    (b) When, from any cause, the vessel required to keep her course and
+    speed finds herself so close that collision cannot be avoided by the
+    action of the give-way vessel alone, she shall take such action as will
+    best aid to avoid collision.
+    (c) A power-driven vessel which takes action in a crossing situation in
+    accordance with sub-paragraph (a) (ii) of this Rule to avoid collision
+    with another power-driven vessel shall, if the circumstances of the
+    case admit, not alter course to port for a vessel on her own port side.
+    (d) This Rule does not relieve the give-way vessel of other obligation to
+    keep out of the way.
+
+Actions (follow strictly unless safety is at risk):
 
 1. STATUS PRIORITY:
    - If status == "MUST_YIELD" -> you MUST maneuver (change rudder or RPM).
@@ -128,11 +168,11 @@ RULES (follow strictly):
    - If status == "MUST_YIELD" -> rudder_deg MUST be >= 0 (STARBOARD turn ONLY). NEGATIVE RUDDER IS STRICTLY FORBIDDEN.
    - If status == "RETURN_TO_COURSE" -> small rudder toward base_heading, max +/-10 deg.
 
-3. MANEUVER MAGNITUDE:
-   - For Rule 14 (head-on): rudder should be from 15 to 25 deg starboard.
-   - For Rule 15 (crossing, give-way): rudder should be from 15 to 25 deg starboard.
-   - For Rule 13 (overtaking): rudder should be from 10 to 20 deg away from overtaken vessel.
-   - For Rule 17.2 (critical convergence / emergency): rudder should be from 20 to 35 deg STARBOARD. Reduce RPM to 30-40% if CPA < 500 meters.
+3. MANEUVER MAGNITUDE for some rules:
+   - Under Rule 14 for head-on: rudder should be from 15 to 25 deg starboard.
+   - Under Rule 15 for crossing for the vessel that give-way: rudder should be from 15 to 25 deg starboard.
+   - Under Rule 13 for overtaking: rudder should be from 10 to 20 deg away from overtaken vessel.
+   - Under Rule 17.2 for critical convergence / emergency: rudder should be from 20 to 35 deg STARBOARD. Reduce RPM to 30-40% if CPA < 500 meters.
    - In other situations apply smooth changes: max 15 deg rudder change per step.
 
 4. RETURN TO BASE COURSE:
@@ -141,6 +181,7 @@ RULES (follow strictly):
      * Use small rudder (from -10 to 10 deg) toward base course. Negative rudder is allowed if it leades to faster return to base_heading_deg.
      * If you defined that heading_diff_deg < abs(1) deg -> output rudder equal to 0 (course restored).
      * Maintain RPM at 50% during the return to base course.
+     * Suggested rudder and RPM must enable vessel to return to the trajectory it supposed to be traveling in the beggining of the simulation as soon as possible.
 
 5. ECO-MODE:
    - Prefer rudder changes over RPM changes.
