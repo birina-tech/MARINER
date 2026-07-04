@@ -20,6 +20,8 @@ from llm_worker import LLMWorker
 from collision_analyzer import launch_collision_analysis, CollisionAnalyzer
 from llm_controller import LLMCoordinator
 from llm_decisions_window import launch_llm_decisions_window
+from return_to_course import TrajectoryAutopilot
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -46,6 +48,7 @@ class MainWindow(QMainWindow):
         self.llm_pending = False
         self.move_mode = False
         self.move_ship = None
+        self.autopilot = TrajectoryAutopilot()
         self.init_menu()
         self.init_ui()
         self.timer = QTimer()
@@ -880,6 +883,10 @@ class MainWindow(QMainWindow):
         # Return a single dictionary for this specific ego_ship
         return {
             'name': ego_ship.name,
+            'current_x': float(ego_ship.x),       # Current X coordinate
+            'current_y': float(ego_ship.y),       # Current Y coordinate
+            'base_x': float(ego_ship.base_x),     # Original X starting coordinate
+            'base_y': float(ego_ship.base_y),     # Original Y starting coordinate
             'current_heading_deg': float(current_heading),
             'base_heading_deg': float(ego_ship.base_heading_deg),
             'heading_diff_deg': float(heading_diff),
@@ -948,17 +955,38 @@ class MainWindow(QMainWindow):
                         ego_data = self.collect_ego_data(ship)
                             
                         if ego_data:
-                            # Create and start a dedicated worker for this ship
-                            worker = LLMWorker(coordinator, ship.name, ego_data)
-                            worker.result_ready.connect(self.on_llm_result)
-                            worker.error_occurred.connect(self.on_llm_error)
-                            
-                            # Tell the thread to safely delete its C++ memory when done
-                            worker.finished.connect(worker.deleteLater)
+                            # Intercept RETURN_TO_COURSE
+                            if ego_data['status'] == 'RETURN_TO_COURSE':
+                                # Bypass LLM and use deterministic PI/PID Autopilot
+                                rudder, rpm = self.autopilot.calculate_return_maneuver(
+                                    ship.x, ship.y, ship.base_x, ship.base_y,
+                                    ship.get_heading_deg(), ship.base_heading_deg,
+                                    ship.r, self.dt
+                                )
                                 
-                            # Store reference to prevent Python garbage collection while running
-                            self.llm_workers[ship.name] = worker
-                            worker.start()
+                                # Apply the mathematical command instantly
+                                ship.apply_llm_command(rudder, rpm)
+                                ship.llm_reasoning = "Deterministic PI/PID return to trajectory."
+                                ship.llm_decision = {"rudder_deg": rudder, "rpm_percent": rpm, "reasoning": ship.llm_reasoning}
+                                
+                                # Check if the maneuver is finally complete
+                                heading_diff = abs((ship.base_heading_deg - ship.get_heading_deg() + 180) % 360 - 180)
+                                if heading_diff <= 1 and ship.rudder_cmd == 0:
+                                    ship.in_maneuver = False
+                                    
+                            else:
+                                # Status is MUST_YIELD or HOLD_COURSE -> Send to LLM
+                                # Create and start a dedicated worker for this ship
+                                worker = LLMWorker(coordinator, ship.name, ego_data)
+                                worker.result_ready.connect(self.on_llm_result)
+                                worker.error_occurred.connect(self.on_llm_error)
+                                
+                                # Tell the thread to safely delete its C++ memory when done
+                                worker.finished.connect(worker.deleteLater)
+                                    
+                                # Store reference to prevent Python garbage collection while running
+                                self.llm_workers[ship.name] = worker
+                                worker.start()
                     
                 self.last_llm_update = self.simulation_time
                     

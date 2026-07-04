@@ -79,11 +79,15 @@ class LLMCoordinator:
         self.system_prompt = """You are an AI Autopilot for a specific marine vessel (the "ego vessel").
 You receive your current telemetry and a list of other vessels in your vicinity and thier current coordinates and heading.
 Your first priority is safety following COLREGs rules. 
-Your second priority, if vessel is safe, is to maintain or return to your base_heading_deg.
+Your second priority, if vessel is safe, is to maintain your initial course.
 
 INPUT FORMAT (JSON):
 {
   "name": "Ship_1",
+  "current_x": 1200.5,
+  "current_y": 3400.2,
+  "base_x": 1000.0,
+  "base_y": 3000.0,
   "current_heading_deg": 45,
   "base_heading_deg": 45,
   "heading_diff_deg": 15,
@@ -157,7 +161,6 @@ Actions (follow strictly unless safety is at risk):
 1. STATUS PRIORITY:
    - If status == "MUST_YIELD" -> you MUST maneuver (change rudder or RPM).
    - If status == "HOLD_COURSE" -> keep rudder=0, rpm=50 (maintain course and speed).
-   - If status == "RETURN_TO_COURSE" -> gradually steer toward base_heading_deg set for this ship.
    - If a ship is MUST_YIELD for one pair but HOLD_COURSE for another -> choose MUST_YIELD.
 
 2. MANEUVER DIRECTION (HARD RULE) used when there are other ships nearby:
@@ -166,7 +169,6 @@ Actions (follow strictly unless safety is at risk):
    - If no_left_turn == true -> rudder_deg MUST be >= 0. Negative values are FORBIDDEN.
    - If status == "HOLD_COURSE" -> rudder_deg MUST be 0, rpm_percent MUST be 50. NO MANEUVERS ALLOWED for stand-on vessels.
    - If status == "MUST_YIELD" -> rudder_deg MUST be >= 0 (STARBOARD turn ONLY). NEGATIVE RUDDER IS STRICTLY FORBIDDEN.
-   - If status == "RETURN_TO_COURSE" -> small rudder toward base_heading, max +/-10 deg.
 
 3. MANEUVER MAGNITUDE for some rules:
    - Under Rule 14 for head-on: rudder should be from 15 to 25 deg starboard.
@@ -175,20 +177,12 @@ Actions (follow strictly unless safety is at risk):
    - Under Rule 17.2 for critical convergence / emergency: rudder should be from 20 to 35 deg STARBOARD. Reduce RPM to 30-40% if CPA < 500 meters.
    - In other situations apply smooth changes: max 15 deg rudder change per step.
 
-4. RETURN TO BASE COURSE:
-   - If status == "RETURN_TO_COURSE":
-     * Calculate rudder needed to base_heading_deg.
-     * Use small rudder (from -10 to 10 deg) toward base course. Negative rudder is allowed if it leades to faster return to base_heading_deg.
-     * If you defined that heading_diff_deg < abs(1) deg -> output rudder equal to 0 (course restored).
-     * Maintain RPM at 50% during the return to base course.
-     * Suggested rudder and RPM must enable vessel to return to the trajectory it supposed to be traveling in the beggining of the simulation as soon as possible.
-
-5. ECO-MODE:
+4. ECO-MODE:
    - Prefer rudder changes over RPM changes.
    - Keep RPM at 50% unless CPA < 1000m or emergency.
    - If reducing RPM: min 30%, never 0%.
 
-6. NO MANEUVER NEEDED:
+5. NO MANEUVER NEEDED:
    - If status == "HOLD_COURSE" AND not returning -> output rudder=0, rpm=50.
 
 Respond with valid JSON only. No markdown, no explanation outside JSON."""
@@ -337,93 +331,3 @@ Respond with valid JSON only. No markdown, no explanation outside JSON."""
             self.last_error = str(e)
             return {"rudder_deg": 0, "rpm_percent": 50, "reasoning": f"Error: {str(e)[:50]}"}
 
-
-    def get_coordinated_commands(self, ships, collision_data):
-        if not collision_data:
-            return {ship.name: {"rudder_deg": 0, "rpm_percent": 50, "reasoning": "No threats"}
-                    for ship in ships}
-
-        table_text = self.format_analysis_table(ships, collision_data)
-        user_message = (f"Coordinate maneuvers for all vessels based on this analysis:\n\n"
-                        f"{table_text}\n\nGenerate commands for ALL vessels listed above.")
-
-        try:
-            if self.provider == 'ollama':
-                content = self._call_ollama(user_message)
-            elif self.provider == 'anthropic':
-                content = self._call_anthropic(user_message)
-            else:
-                content = self._call_openai_compatible(user_message)
-
-
-            # Remove possible markdown-blocks
-            content = content.replace("```json", "").replace("```", "").strip()
-            commands = json.loads(content)
-            self.last_status = 'ok'
-
-            # Note: return full response, not truncated 
-            # allowing apply_commands to identify "vessel_commands"
-            return commands
-
-        except Exception as e:
-            error_msg = str(e)
-            self.last_status = 'error'
-            self.last_error = error_msg
-            print(f"LLM Coordinator Error ({self.provider}): {error_msg}")
-            print(f"Raw content: {content[:300] if 'content' in dir() else 'N/A'}")
-            return {ship.name: {"rudder_deg": 0, "rpm_percent": 50,
-                                "reasoning": f"Error: {error_msg[:50]}"}
-                    for ship in ships}
-
-    def apply_commands(self, ships, commands):
-        """
-        Apply LLM command to ship.
-        
-        Commands can be:
-        
-        1. {"vessel_commands": {"Ship_1": {...}}} — with additional text
-        2. {"Ship_1": {...}, "Ship_2": {...}} — without additional text
-        
-        """
-        if not commands:
-            print("No commands received from LLM")
-            return
-
-        # Detect command format (1 or 2)
-        vessel_commands = None
-
-        if isinstance(commands, dict):
-            if "vessel_commands" in commands:
-                # Format 1
-                vessel_commands = commands["vessel_commands"]
-            else:
-                # Format 2
-                ship_names = [s.name for s in ships]
-                if any(name in commands for name in ship_names):
-                    vessel_commands = commands
-                else:
-                    print(f"Unexpected format. Keys: {list(commands.keys())}")
-                    return
-
-        if not vessel_commands:
-            print(f"No vessel commands found. Type: {type(commands)}")
-            return
-
-        #print(f"Applying commands to {len(vessel_commands)} vessels")
-
-        for ship in ships:
-            if ship.name in vessel_commands:
-                cmd = vessel_commands[ship.name]
-
-                rudder = cmd.get("rudder_deg", 0)
-                rpm = cmd.get("rpm_percent", 50)
-                reasoning = cmd.get("reasoning", "No reasoning provided")
-
-                ship.apply_llm_command(rudder, rpm)
-                ship.llm_decision = cmd
-                ship.llm_reasoning = reasoning
-
-                #print(f"OK {ship.name}: rudder={rudder} deg, rpm={rpm}%, reasoning={reasoning[:60]}")
-            else:
-                if ship.llm_controlled:
-                    print(f"Warning: {ship.name} not found in LLM commands")
