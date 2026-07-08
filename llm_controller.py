@@ -29,10 +29,26 @@ class LLMCoordinator:
         'anthropic': {
             'name': 'Anthropic Claude',
             'url': 'https://api.anthropic.com/v1/messages',
-            'models': ['claude-sonnet-4-20250514', 'claude-3-5-sonnet-20241022'],
-            'default_model': 'claude-sonnet-4-20250514',
+            'models': ['claude-haiku-4-5-20251001', 'claude-sonnet-4-20250514', 'claude-3-5-sonnet-20241022'],
+            'default_model': 'claude-haiku-4-5-20251001',
             'needs_key': True,
             'key_env': 'ANTHROPIC_API_KEY'
+        },
+        'gemini': {
+            'name': 'Google Gemini',
+            'url': 'https://generativelanguage.googleapis.com/v1beta/models/',
+            'models': ['gemini-2.5-flash', 'gemini-1.5-pro'],
+            'default_model': 'gemini-2.5-flash',
+            'needs_key': True,
+            'key_env': 'GEMINI_API_KEY'
+        },
+        'qwen': {
+            'name': 'Alibaba Qwen',
+            'url': 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
+            'models': ['qwen3.7-plus', 'qwen-max'],
+            'default_model': 'qwen3.7-plus',
+            'needs_key': True,
+            'key_env': 'QWEN_API_KEY'
         },
         'groq': {
             'name': 'Groq (быстро, бесплатно)',
@@ -41,22 +57,6 @@ class LLMCoordinator:
             'default_model': 'llama-3.3-70b-versatile',
             'needs_key': True,
             'key_env': 'GROQ_API_KEY'
-        },
-        'deepseek': {
-            'name': 'DeepSeek (дёшево)',
-            'url': 'https://api.deepseek.com/v1/chat/completions',
-            'models': ['deepseek-chat', 'deepseek-reasoner'],
-            'default_model': 'deepseek-chat',
-            'needs_key': True,
-            'key_env': 'DEEPSEEK_API_KEY'
-        },
-        'openrouter': {
-            'name': 'OpenRouter (много моделей)',
-            'url': 'https://openrouter.ai/api/v1/chat/completions',
-            'models': ['meta-llama/llama-3.1-70b-instruct', 'anthropic/claude-3.5-sonnet'],
-            'default_model': 'meta-llama/llama-3.1-70b-instruct',
-            'needs_key': True,
-            'key_env': 'OPENROUTER_API_KEY'
         }
     }
 
@@ -159,7 +159,7 @@ Rule 17 - Action by Stand-on Vessel
 Actions (follow strictly unless safety is at risk):
 
 1. STATUS PRIORITY:
-   - If status == "MUST_YIELD" -> you MUST maneuver (change rudder or RPM).
+   - If status == "MUST_YIELD" -> you MUST maneuver (change rudder and/or RPM).
    - If status == "HOLD_COURSE" -> keep rudder=0, rpm=50 (maintain course and speed).
    - If a ship is MUST_YIELD for one pair but HOLD_COURSE for another -> choose MUST_YIELD.
 
@@ -167,14 +167,14 @@ Actions (follow strictly unless safety is at risk):
    - ALWAYS prefer STARBOARD turn (positive rudder).
    - CRITICAL CONVERGENCE (Rule 17.2 / Emergency / CPA < 1000 meters): YOU MUST TURN STARBOARD. Port turn (negative rudder) is STRICTLY FORBIDDEN in emergencies.
    - If no_left_turn == true -> rudder_deg MUST be >= 0. Negative values are FORBIDDEN.
-   - If status == "HOLD_COURSE" -> rudder_deg MUST be 0, rpm_percent MUST be 50. NO MANEUVERS ALLOWED for stand-on vessels.
+   - If status == "HOLD_COURSE" -> rudder_deg MUST be 0, rpm_percent MUST be 50 or less (if vessel need to slow down to create a yileding situation). NO MANEUVERS ALLOWED for stand-on vessels.
    - If status == "MUST_YIELD" -> rudder_deg MUST be >= 0 (STARBOARD turn ONLY). NEGATIVE RUDDER IS STRICTLY FORBIDDEN.
 
 3. MANEUVER MAGNITUDE for some rules:
    - Under Rule 14 for head-on: rudder should be from 15 to 25 deg starboard.
    - Under Rule 15 for crossing for the vessel that give-way: rudder should be from 15 to 25 deg starboard.
    - Under Rule 13 for overtaking: rudder should be from 10 to 20 deg away from overtaken vessel.
-   - Under Rule 17.2 for critical convergence / emergency: rudder should be from 20 to 35 deg STARBOARD. Reduce RPM to 30-40% if CPA < 500 meters.
+   - Under Rule 17.2 for critical convergence / emergency: rudder should be from 20 to 35 deg STARBOARD. Reduce RPM to at least 30-40% (or less) if CPA < 500 meters.
    - In other situations apply smooth changes: max 15 deg rudder change per step.
 
 4. ECO-MODE:
@@ -257,19 +257,27 @@ Respond with valid JSON only. No markdown, no explanation outside JSON."""
             'Content-Type': 'application/json',
             'Authorization': f'Bearer {self.api_key}'
         }
+        
+        # Apply specific constraints for Qwen
+        temp = 0.1 if self.provider == 'qwen' else 0.2
+        max_t = 50 if self.provider == 'qwen' else 1024
+
         payload = {
             'model': self.model,
             'messages': [
                 {'role': 'system', 'content': self.system_prompt},
                 {'role': 'user', 'content': user_message}
             ],
-            'temperature': 0.2,
+            'temperature': temp,
+            'max_tokens': max_t,
             'response_format': {'type': 'json_object'}
         }
         response = requests.post(self.url, json=payload, headers=headers, timeout=30)
         response.raise_for_status()
         return response.json()['choices'][0]['message']['content']
-
+        
+        
+        
     def _call_anthropic(self, user_message):
         headers = {
             'Content-Type': 'application/json',
@@ -279,13 +287,36 @@ Respond with valid JSON only. No markdown, no explanation outside JSON."""
         payload = {
             'model': self.model,
             'max_tokens': 1024,
-            'temperature': 0.2,
+            'temperature': 0.1,
             'system': self.system_prompt,
             'messages': [{'role': 'user', 'content': user_message}]
         }
         response = requests.post(self.url, json=payload, headers=headers, timeout=30)
         response.raise_for_status()
         return response.json()['content'][0]['text']
+
+    def _call_gemini(self, user_message):
+        # Gemini puts the model name and API key directly in the URL
+        full_url = f"{self.url}{self.model}:generateContent?key={self.api_key}"
+        headers = {'Content-Type': 'application/json'}
+        payload = {
+            "system_instruction": {
+                "parts": [{"text": self.system_prompt}]
+            },
+            "contents": [{
+                "parts": [{"text": user_message}]
+            }],
+            "generationConfig": {
+                "temperature": 0.1,
+                "maxOutputTokens": 50,
+                "responseMimeType": "application/json"
+            }
+        }
+        response = requests.post(full_url, json=payload, headers=headers, timeout=30)
+        response.raise_for_status()
+        return response.json()['candidates'][0]['content']['parts'][0]['text']
+
+
 
     def _call_ollama(self, user_message):
         payload = {
@@ -318,7 +349,10 @@ Respond with valid JSON only. No markdown, no explanation outside JSON."""
                 content = self._call_ollama(user_message)
             elif self.provider == 'anthropic':
                 content = self._call_anthropic(user_message)
+            elif self.provider == 'gemini':
+                content = self._call_gemini(user_message)
             else:
+                # OpenAI, Groq, DeepSeek, and Qwen all use this compatible format
                 content = self._call_openai_compatible(user_message)
 
             content = content.replace("```json", "").replace("```", "").strip()
