@@ -37,6 +37,8 @@ class Ship:
         self.base_heading_deg = float(psi_deg)
         self.in_maneuver = False # True if ship's current heading (self.psi) deviates by more than 1 degrees from its base_heading_deg
         self.llm_reasoning = ""  # LLM desicion reasoning
+        # Initialize an empty list to store historical snapshots
+        self.trajectory_history = []
 
     def update(self, dt):
         tau_c = np.clip(self.rudder_cmd * np.pi / 180 * (20 / 35), -20, 20)
@@ -62,6 +64,21 @@ class Ship:
 
     def distance_to(self, px, py): # calculates the exact straight-line distance between the ship's current position and any other specific point on the map
         return np.sqrt((self.x - px) ** 2 + (self.y - py) ** 2)
+
+    def record_history_waypoint(self, current_time_s):
+        """Records a snapshot of the ship's telemetry."""
+        self.trajectory_history.append({
+            "time": current_time_s,
+            "x": round(self.x, 1),
+            "y": round(self.y, 1),
+            "heading": round(self.get_heading_deg(), 1),
+            "speed": round(self.u, 1)
+        })
+        
+        # Keep only the last 20 minutes (1200 seconds) of data to save memory
+        self.trajectory_history = [wp for wp in self.trajectory_history if current_time_s - wp["time"] <= 1200]
+        
+        
 
     def get_pentagon_vertices(self): # UI function
         half_width = self.width / 2

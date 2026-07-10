@@ -53,7 +53,7 @@ class MainWindow(QMainWindow):
         self.init_ui()
         self.timer = QTimer()
         self.timer.timeout.connect(self.simulation_step)
-
+        self.last_history_record = 0.0  # Tracks when we last saved waypoints
 
     def closeEvent(self, event):
         """Intercepts the window close event to clean up threads gracefully."""
@@ -811,20 +811,53 @@ class MainWindow(QMainWindow):
 
 
 
-    def collect_ego_data(self, ego_ship):  # Collects collision matrix strictly from the perspective of the ego_ship.
-
+    def collect_ego_data(self, ego_ship):
         from colreg_rules import determine_colreg_situation
         from collision_analyzer import CollisionAnalyzer
         
+        # HELPER FUNCTION to record past behavior for LLM
+        def get_historical_state(target_time, history):
+            if not history: return None
+            # Find the waypoint closest to the requested target_time
+            closest = min(history, key=lambda wp: abs(wp["time"] - target_time))
+            # If the closest point is still more than 2 minutes away (e.g. simulation just started), ignore it
+            if abs(closest["time"] - target_time) > 120:
+                return None
+            return {"heading_deg": closest["heading"], "speed_ms": closest["speed"]}
+
         analyzer = CollisionAnalyzer()
         pairs_info = []
         must_yield = False
         no_left_turn = False
         all_passed = True
         
+        # Calculate target times for history extraction (15m=900s, 10m=600s, 5m=300s)
+        t_15m = max(0, self.simulation_time - 900)
+        t_10m = max(0, self.simulation_time - 600)
+        t_5m  = max(0, self.simulation_time - 300)
+        
         for other in self.ships:
             if other is ego_ship:
                 continue
+          
+         
+            # Extract the history for this specific 'other' ship
+            historical_data = {
+                "T-15m": get_historical_state(t_15m, other.trajectory_history),
+                "T-10m": get_historical_state(t_10m, other.trajectory_history),
+                "T-5m":  get_historical_state(t_5m, other.trajectory_history)
+            }
+
+            pairs_info.append({
+                'other_ship': other.name,
+                'rule': colreg['rule'],
+                'role': role,
+                'cpa_m': float(cpa_data['DCPA']),
+                'tcpa_s': float(cpa_data['TCPA']) if not np.isinf(cpa_data['TCPA']) else 99999.0,
+                'crosses_ahead': crosses_ahead,
+                'recent_history': historical_data # <-- NEW MEMORY ADDED TO PAYLOAD
+            })
+
                 
             cpa_data = analyzer.calculate_cpa_tcpa(ego_ship, other)
             colreg = determine_colreg_situation(
@@ -1014,6 +1047,13 @@ class MainWindow(QMainWindow):
                 
             self.simulation_time += self.dt
             self.canvas.update_plot(self.ships, self.running, self.simulation_time)
+            
+                     
+            # Record historical waypoints every 60 simulation seconds
+            if self.simulation_time - self.last_history_record >= 60.0:
+                for ship in self.ships:
+                    ship.record_history_waypoint(self.simulation_time)
+                self.last_history_record = self.simulation_time
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
