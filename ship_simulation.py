@@ -856,7 +856,7 @@ class MainWindow(QMainWindow):
             
             # Check if vessels are still on collision course
             tcpa_val = cpa_data['TCPA']
-            if np.isinf(tcpa_val) or tcpa_val > 0:
+            if np.isinf(tcpa_val) or tcpa_val > 0.1:
                 all_passed = False
 
             pairs_info.append({

@@ -18,6 +18,14 @@ class LLMCoordinator:
             'default_model': 'llama3',
             'needs_key': False
         },
+        'deepseek': {
+            'name': 'DeepSeek (дёшево)',
+            'url': 'https://api.deepseek.com/v1/chat/completions',
+            'models': ['deepseek-chat', 'deepseek-reasoner'],
+            'default_model': 'deepseek-chat',
+            'needs_key': True,
+            'key_env': 'DEEPSEEK_API_KEY'
+        },
         'openai': {
             'name': 'OpenAI GPT-4o',
             'url': 'https://api.openai.com/v1/chat/completions',
@@ -116,45 +124,7 @@ OUTPUT FORMAT (strict JSON only, no extra text):
   "reasoning": "Brief explanation of your maneuver based on the rules."
 }
 
-COLREG72 Rules:
-Rule 14 - Head-on Situation
-    (a) When two power-driven vessels are meeting on reciprocal or nearly
-    reciprocal courses so as to involve risk of collision each shall alter
-    hег course to starboard so that each shall pass on the port side of the
-    other.
-    (b) Such a situation shall be deemed to exist when a vessel sees the
-    other ahead or nearly ahead and by night she could see the masthead
-    lights of the other in a line or nearly in a line and/or both
-    sidelights and by day she observes the corresponding aspect of the
-    other vessel.
-    (с) When a vessel is in any doubt as to whether such a situation exists
-    she shall assume that it does exist and act accordingly.
-Rule 15 - Crossing Situation
-    When two power-driven vessels are crossing so as to involve risk of
-    collision, the vessel which has the other on her own starboard side shall
-    keep out of the way and shall, if the circumstances of the case admit,
-    avoid crossing ahead of the other vessel.
-Rule 16 - Action by Give-way Vessel
-    Every vessel which is directed to keep out of the way of another vessel
-    shall, so far as possible, take early and substantial action to keep well
-    clear.
-Rule 17 - Action by Stand-on Vessel
-    (a) (i) Where by one of two vessels is to keep out of the way the other
-        shall keep her course and speed.
-        (ii) The latter vessel may however take action to avoid collision by
-        her manoeuvre alone, as soon as it becomes apparent to her
-        that the vessel required to keep out of the way is not taking appropriate
-        action in compliance with these Rules.
-    (b) When, from any cause, the vessel required to keep her course and
-    speed finds herself so close that collision cannot be avoided by the
-    action of the give-way vessel alone, she shall take such action as will
-    best aid to avoid collision.
-    (c) A power-driven vessel which takes action in a crossing situation in
-    accordance with sub-paragraph (a) (ii) of this Rule to avoid collision
-    with another power-driven vessel shall, if the circumstances of the
-    case admit, not alter course to port for a vessel on her own port side.
-    (d) This Rule does not relieve the give-way vessel of other obligation to
-    keep out of the way.
+
 
 Actions (follow strictly unless safety is at risk):
 
@@ -166,16 +136,21 @@ Actions (follow strictly unless safety is at risk):
 2. MANEUVER DIRECTION (HARD RULE) used when there are other ships nearby:
    - ALWAYS prefer STARBOARD turn (positive rudder).
    - CRITICAL CONVERGENCE (Rule 17.2 / Emergency / CPA < 1000 meters): YOU MUST TURN STARBOARD. Port turn (negative rudder) is STRICTLY FORBIDDEN in emergencies.
+      -- The vessel may take action to avoid collision by her manoeuvre alone, 
+         as soon as it becomes apparent to her that the other vessel that is required to keep out 
+         of the way is not taking appropriate action in compliance with these Rules.
    - If no_left_turn == true -> rudder_deg MUST be >= 0. Negative values are FORBIDDEN.
-   - If status == "HOLD_COURSE" -> rudder_deg MUST be 0, rpm_percent MUST be 50 or less (if vessel need to slow down to create a yileding situation). NO MANEUVERS ALLOWED for stand-on vessels.
+   - If status == "HOLD_COURSE" -> rudder_deg MUST be 0, recomended rpm_percent MUST be 50
+   - If other vessel is in front with simular speed consider to slow down to create a larger distance between two vessels. 
+   - NO MANEUVERS ALLOWED for stand-on vessels.
    - If status == "MUST_YIELD" -> rudder_deg MUST be >= 0 (STARBOARD turn ONLY). NEGATIVE RUDDER IS STRICTLY FORBIDDEN.
 
 3. MANEUVER MAGNITUDE for some rules:
-   - Under Rule 14 for head-on: rudder should be from 15 to 25 deg starboard.
-   - Under Rule 15 for crossing for the vessel that give-way: rudder should be from 15 to 25 deg starboard.
+   - Under Rule 14 for Head-on Situation: rudder should be from 15 to 25 deg starboard.
+   - Under Rule 15 for Crossing Situation: rudder should be from 15 to 25 deg starboard.
    - Under Rule 13 for overtaking: rudder should be from 10 to 20 deg away from overtaken vessel.
    - Under Rule 17.2 for critical convergence / emergency: rudder should be from 20 to 35 deg STARBOARD. Reduce RPM to at least 30-40% (or less) if CPA < 500 meters.
-   - In other situations apply smooth changes: max 15 deg rudder change per step.
+   -- In other situations apply smooth changes: max 15 deg rudder change per step.
 
 4. ECO-MODE:
    - Prefer rudder changes over RPM changes.
@@ -183,7 +158,7 @@ Actions (follow strictly unless safety is at risk):
    - If reducing RPM: min 30%, never 0%.
 
 5. NO MANEUVER NEEDED:
-   - If status == "HOLD_COURSE" AND not returning -> output rudder=0, rpm=50.
+   - If status == "HOLD_COURSE" AND not "returning" -> output rudder=0, rpm=50.
 
 Respond with valid JSON only. No markdown, no explanation outside JSON."""
 
@@ -223,7 +198,20 @@ Respond with valid JSON only. No markdown, no explanation outside JSON."""
                     return True, "Connection to Anthropic is sucessful"
                 else:
                     return False, f"Error {r.status_code}: {r.text[:100]}"
-
+            elif self.provider == 'gemini':
+                if not self.api_key:
+                    return False, "API key is not set"
+                full_url = f"{self.url}{self.model}:generateContent?key={self.api_key}"
+                headers = {'Content-Type': 'application/json'}
+                payload = {
+                    "contents": [{"parts": [{"text": "Hi"}]}],
+                    "generationConfig": {"maxOutputTokens": 10}
+                }
+                r = requests.post(full_url, json=payload, headers=headers, timeout=10)
+                if r.status_code == 200:
+                    return True, "Connection to Google Gemini is successful"
+                else:
+                    return False, f"Error {r.status_code}: {r.text[:100]}"
             else:  # OpenAI-совместимые API
                 if not self.api_key:
                     return False, "API key is not set"
@@ -296,7 +284,6 @@ Respond with valid JSON only. No markdown, no explanation outside JSON."""
         return response.json()['content'][0]['text']
 
     def _call_gemini(self, user_message):
-        # Gemini puts the model name and API key directly in the URL
         full_url = f"{self.url}{self.model}:generateContent?key={self.api_key}"
         headers = {'Content-Type': 'application/json'}
         payload = {
@@ -308,13 +295,26 @@ Respond with valid JSON only. No markdown, no explanation outside JSON."""
             }],
             "generationConfig": {
                 "temperature": 0.1,
-                "maxOutputTokens": 50,
+                "maxOutputTokens": 5000,
                 "responseMimeType": "application/json"
             }
         }
+        
+        
         response = requests.post(full_url, json=payload, headers=headers, timeout=30)
+        
+        
         response.raise_for_status()
-        return response.json()['candidates'][0]['content']['parts'][0]['text']
+        data = response.json()
+        
+        ### use a try-except block to catch specific structural errors in the dictionary
+        try:
+            return data['candidates'][0]['content']['parts'][0]['text']
+        except KeyError as e:
+            print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+            print(f"DEBUG GEMINI: KeyError! Google's response is missing this key: {e}")
+            print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+            raise Exception(f"Unexpected Gemini format. Check terminal for raw text.")
 
 
 
