@@ -6,16 +6,12 @@ class Ship:
     def __init__(self, x, y, psi_deg, speed_ms, name=None):
         Ship._counter += 1
         self.id = Ship._counter
-        self.name = name or f"Ship_{self.id}" # Name of the ship for the GUI
-        
-        self.x = float(x) # Current 2D spatial coordinates of the vessel in meters
-        self.y = float(y) # Current 2D spatial coordinates of the vessel in meters
-        
-        self.base_x = float(x) # Recording an initial coordinates for future return to base course
-        self.base_y = float(y) # Recording an initial coordinates for future return to base course
-        self.psi = np.deg2rad(float(psi_deg)) # Current heading (yaw angle) of the ship, converted from degrees to radians
-        self.u = float(speed_ms) # Current forward speed of the ship in meters per second
-        self.r = 0.0 # Current rate of turn (yaw rate) in radians per second
+        self.name = name or f"Ship_{self.id}"
+        self.x = float(x)
+        self.y = float(y)
+        self.psi = np.deg2rad(float(psi_deg))
+        self.u = float(speed_ms)
+        self.r = 0.0
         self.T_psi = 30.0
         self.K_psi = 0.01
         self.T_v = 50.0
@@ -35,8 +31,17 @@ class Ship:
         self.llm_controlled = False
         self.llm_decision = None
         self.base_heading_deg = float(psi_deg)
-        self.in_maneuver = False # True if ship's current heading (self.psi) deviates by more than 2 degrees from its base_heading_deg
-        self.llm_reasoning = ""  # LLM desicion reasoning
+        self.in_maneuver = False
+        self.llm_reasoning = ""  # Обоснование решения LLM
+
+        self.length = self.hull_length # Длина судна в метрах (для расчета точки поворота)
+        self.assigned_route = None  # Ссылка на объект Route
+        self.autopilot = None  # Экземпляр RouteAutopilot
+        self.autopilot_enabled = False  # Флаг включения авторулевого
+        # Для отслеживания маневра LLM
+        self.in_maneuver = False  # Флаг: судно выполняет маневр расхождения
+        self.maneuver_course_deg = None  # Курс, заданный для маневра
+        self.maneuver_target_course = None  # Целевой курс маневра
 
     def update(self, dt):
         tau_c = np.clip(self.rudder_cmd * np.pi / 180 * (20 / 35), -20, 20)
@@ -57,13 +62,16 @@ class Ship:
             self.history_x.pop(0)
             self.history_y.pop(0)
 
-    def get_heading_deg(self): # Convert ship's heading from radians into a standard compass heading (in degrees)
+    def get_heading_deg(self):
         return np.mod(np.rad2deg(self.psi), 360)
+    def get_rot(self):
+        """Угловая скорость (Rate of Turn) в градусах в минуту"""
+        return self.r * (180.0 / np.pi) * 60.0
 
-    def distance_to(self, px, py): # calculates the exact straight-line distance between the ship's current position and any other specific point on the map
+    def distance_to(self, px, py):
         return np.sqrt((self.x - px) ** 2 + (self.y - py) ** 2)
 
-    def get_pentagon_vertices(self): # UI function
+    def get_pentagon_vertices(self):
         half_width = self.width / 2
         bow_x = self.length / 2
         stern_x = -self.length / 2
@@ -81,7 +89,7 @@ class Ship:
     def toggle_llm_control(self, enable=True):
         self.llm_controlled = enable
 
-    def apply_llm_command(self, rudder_deg, rpm_percent): # Converts LLM rudder commands into actionalble changes (with phisical boundaries)
+    def apply_llm_command(self, rudder_deg, rpm_percent):
         rudder_diff = rudder_deg - self.rudder_cmd
         if abs(rudder_diff) > 5:
             self.rudder_cmd += np.sign(rudder_diff) * 5
@@ -93,9 +101,27 @@ class Ship:
         else:
             self.rpm_cmd = rpm_percent
 
-    def get_llm_status_text(self): # UI function, generate  pop-up text attached to the ship
+    def get_llm_status_text(self):
         if not self.llm_controlled:
             return ""
+        
+        # Если судно под авторулевым — показываем курс, а не руль
+        autopilot = getattr(self, 'autopilot', None)
+        autopilot_enabled = getattr(self, 'autopilot_enabled', False)
+        
+        if autopilot_enabled and autopilot is not None:
+            if autopilot.mode == 1:  # MODE_HOLD_COURSE
+                # Показываем курс, который держит авторулевой
+                hold_course = np.degrees(autopilot.hold_course_rad) if autopilot.hold_course_rad else None
+                if hold_course is not None:
+                    return f"\nLLM: HOLD {hold_course:.0f}°"
+                else:
+                    return "\nLLM: HOLD (no course)"
+            else:
+                # Режим ROUTE — судно идёт по траектории
+                return "\nLLM: ROUTE"
+        
+        # Обычное судно без авторулевого — показываем руль/RPM
         if self.llm_decision:
             rudder = self.llm_decision.get('rudder_deg', 0)
             rpm = self.llm_decision.get('rpm_percent', 50)
@@ -111,9 +137,8 @@ class Ship:
             f"{self.u:.3f}",
             f"{self.rudder_cmd:.2f}",
             f"{self.rpm_cmd:.1f}"
+            f"{self.get_rot():.2f}"  # ROT в град/мин
         ]
     def set_base_heading(self, heading_deg):
-        """Set a new base heading degree and position (e.g., after Load Task)"""
-        self.base_x = self.x
-        self.base_y = self.y
+        """Установить новый базовый курс (например, после Load Task)"""
         self.base_heading_deg = float(heading_deg)

@@ -5,14 +5,14 @@ import csv
 from datetime import datetime
 import numpy as np
 import warnings
+from autopilot import RouteAutopilot
+from autopilot_debug_dialog import AutopilotDebugDialog
 warnings.filterwarnings("ignore")
-
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QPushButton, QLabel, QStatusBar,
                              QMessageBox, QInputDialog, QMenu, QAction, QDialog)
 from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtGui import QCursor
-
 from ship import Ship
 from canvas import ShipCanvas
 from dialogs import AddShipDialog, ControlDialog, LLMSettingsDialog
@@ -20,6 +20,11 @@ from llm_worker import LLMWorker
 from collision_analyzer import launch_collision_analysis, CollisionAnalyzer
 from llm_controller import LLMCoordinator
 from llm_decisions_window import launch_llm_decisions_window
+from safe_passing_dialog import launch_safe_passing_calculator
+from units import format_speed, format_distance
+from route import Route
+from route_dialog import RouteDialog
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -46,13 +51,49 @@ class MainWindow(QMainWindow):
         self.llm_pending = False
         self.move_mode = False
         self.move_ship = None
+        self.predicted_tracks = {}
+        self.routes = []
+        self.current_route = None
+        self.route_mode = False
+        self.editing_route = None
+        self.route_dialog = None
+        self.autopilot_debug_dialog = None
+        # Единицы измерения
+        self.use_miles = True
+        self.use_knots = True
+
         self.init_menu()
         self.init_ui()
         self.timer = QTimer()
         self.timer.timeout.connect(self.simulation_step)
 
+    def set_predicted_tracks(self, tracks_dict):
+        """Установить прогнозируемые треки для отображения"""
+        self.predicted_tracks = tracks_dict
+        self.canvas.update_plot(
+            self.ships, self.running, self.simulation_time,
+            use_miles=self.use_miles, use_knots=self.use_knots,
+            predicted_tracks=self.predicted_tracks,
+            routes=self.routes
+        )
+        self.statusBar().showMessage(
+            f"Predicted tracks displayed for {len(tracks_dict)} vessels"
+        )
+
+    def clear_predicted_tracks(self):
+        """Очистить прогнозируемые треки"""
+        self.predicted_tracks = {}
+        self.canvas.update_plot(
+            self.ships, self.running, self.simulation_time,
+            use_miles=self.use_miles, use_knots=self.use_knots,
+            predicted_tracks=self.predicted_tracks,
+            routes=self.routes
+        )
+        self.statusBar().showMessage("Predicted tracks cleared")
+
     def init_menu(self):
         menu_bar = self.menuBar()
+
         view_menu = menu_bar.addMenu("View")
         self.action_vector_len = view_menu.addAction("Vector length (minutes)")
         self.action_vector_len.triggered.connect(self.set_vector_length)
@@ -64,6 +105,14 @@ class MainWindow(QMainWindow):
         view_menu.addSeparator()
         self.action_reset_view = view_menu.addAction("Reset view settings")
         self.action_reset_view.triggered.connect(self.reset_view_settings)
+
+        # Меню Units
+        units_menu = menu_bar.addMenu("Units")
+        self.action_toggle_distance = units_menu.addAction("📏 Distance: Nautical Miles")
+        self.action_toggle_distance.triggered.connect(self.toggle_distance_units)
+        self.action_toggle_speed = units_menu.addAction(" Speed: Knots")
+        self.action_toggle_speed.triggered.connect(self.toggle_speed_units)
+
         llm_menu = menu_bar.addMenu("LLM")
         self.action_llm_settings = llm_menu.addAction("⚙️ LLM Settings...")
         self.action_llm_settings.triggered.connect(self.open_llm_settings)
@@ -79,19 +128,50 @@ class MainWindow(QMainWindow):
         llm_menu.addSeparator()
         self.action_llm_toggle = llm_menu.addAction("🤖 Enable LLM for all vessels")
         self.action_llm_toggle.triggered.connect(self.toggle_llm_for_all)
+
         tasks_menu = menu_bar.addMenu("Tasks")
         self.action_save_task = tasks_menu.addAction("💾 Save Task")
         self.action_save_task.triggered.connect(self.save_task)
-        self.action_load_task = tasks_menu.addAction("📂 Load Task")
+        self.action_load_task = tasks_menu.addAction(" Load Task")
         self.action_load_task.triggered.connect(self.load_task)
+
         help_menu = menu_bar.addMenu("Help")
-        self.action_help = help_menu.addAction("📘 User guide")
+        self.action_help = help_menu.addAction("📖 User guide")
         self.action_help.triggered.connect(self.show_help)
-        self.action_api_help = help_menu.addAction("🔑 Where to get API keys?")
+        self.action_api_help = help_menu.addAction(" Where to get API keys?")
         self.action_api_help.triggered.connect(self.show_api_help)
         help_menu.addSeparator()
         self.action_about = help_menu.addAction("ℹ️ About")
         self.action_about.triggered.connect(self.show_about)
+
+    def open_rules_settings(self):
+        """Открыть диалог настроек правил МППСС"""
+        from rules_settings_dialog import launch_rules_settings
+        launch_rules_settings(self)
+
+    def toggle_distance_units(self):
+        self.use_miles = not self.use_miles
+        unit_name = "Nautical Miles" if self.use_miles else "Meters"
+        self.action_toggle_distance.setText(f"📏 Distance: {unit_name}")
+        self.statusBar().showMessage(f"Distance units: {unit_name}")
+        self.canvas.update_plot(
+            self.ships, self.running, self.simulation_time,
+            use_miles=self.use_miles, use_knots=self.use_knots,
+            predicted_tracks=self.predicted_tracks,
+            routes=self.routes
+        )
+
+    def toggle_speed_units(self):
+        self.use_knots = not self.use_knots
+        unit_name = "Knots" if self.use_knots else "m/s"
+        self.action_toggle_speed.setText(f"⚡ Speed: {unit_name}")
+        self.statusBar().showMessage(f"Speed units: {unit_name}")
+        self.canvas.update_plot(
+            self.ships, self.running, self.simulation_time,
+            use_miles=self.use_miles, use_knots=self.use_knots,
+            predicted_tracks=self.predicted_tracks,
+            routes=self.routes
+        )
 
     def set_llm_interval(self):
         val, ok = QInputDialog.getDouble(
@@ -100,7 +180,7 @@ class MainWindow(QMainWindow):
             self.llm_update_interval, 1.0, 60.0, 1)
         if ok:
             self.llm_update_interval = val
-            self.action_llm_interval.setText(f"⏱ Query interval: {val:.1f}s")
+            self.action_llm_interval.setText(f" Query interval: {val:.1f}s")
             self.statusBar().showMessage(f"LLM query interval set to {val:.1f}s")
 
     def set_simulation_speed(self):
@@ -240,6 +320,14 @@ class MainWindow(QMainWindow):
         <li><b>Control vessel:</b> <b>RMB on vessel icon</b>. Opens context menu with Delete/Move/Options.</li>
         <li><b>Move vessel:</b> RMB on vessel → Move → Click LMB on new position → Set course and speed.</li>
         </ul>
+        <h3>Routes:</h3>
+        <ul>
+        <li>Press <b>🛤 Create Route</b> button on the toolbar.</li>
+        <li>Click <b>RMB</b> on the canvas to add waypoints.</li>
+        <li><b>RMB on route point</b> → Edit or Delete route.</li>
+        <li>In edit mode: <b>LMB drag</b> to move route points.</li>
+        <li>Assign a vessel to follow the route.</li>
+        </ul>
         <h3>Tasks:</h3>
         <ul>
         <li>Menu <b>Tasks → Save Task</b> — save current vessel configuration to a file.</li>
@@ -294,6 +382,7 @@ class MainWindow(QMainWindow):
         <li>Support for local (Ollama) and cloud (OpenAI, Groq, Anthropic, DeepSeek) models</li>
         <li>Simulation data logging to CSV</li>
         <li>Task save/load functionality</li>
+        <li>Route creation and vessel assignment</li>
         </ul>
         <p><i>Based on architecture from the paper
         "Large Language Model-based Decision-making for COLREGs-compliant autonomous surface vehicles"</i></p>
@@ -365,12 +454,18 @@ class MainWindow(QMainWindow):
                 ship.rudder_cmd = vessel_data.get('rudder_deg', 0.0)
                 ship.rpm_cmd = vessel_data.get('rpm_percent', 50.0)
                 ship.set_base_heading(vessel_data['course_deg'])
+                ship.llm_controlled = False
                 self.ships.append(ship)
             self.statusBar().showMessage(f"Task loaded: {filepath}")
             QMessageBox.information(
                 self, "Task Loaded",
                 f"Task loaded successfully:\n{filepath}\n\nVessels: {len(self.ships)}")
-            self.canvas.update_plot(self.ships, self.running, self.simulation_time)
+            self.canvas.update_plot(
+                self.ships, self.running, self.simulation_time,
+                use_miles=self.use_miles, use_knots=self.use_knots,
+                predicted_tracks=self.predicted_tracks,
+                routes=self.routes
+            )
         except Exception as e:
             QMessageBox.critical(self, "Load Error", f"Failed to load task:\n{e}")
 
@@ -380,15 +475,14 @@ class MainWindow(QMainWindow):
         main_layout = QVBoxLayout(central_widget)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
-        
-        # Верхняя панель с кнопками
+
+        # Панель инструментов
         toolbar = QWidget()
         toolbar.setStyleSheet("background-color: #f0f0f0; border-bottom: 1px solid #cccccc;")
         toolbar_layout = QHBoxLayout(toolbar)
         toolbar_layout.setContentsMargins(10, 5, 10, 5)
         toolbar_layout.setSpacing(10)
-        
-        # Серый стиль по умолчанию для всех кнопок
+
         default_style = """
             QPushButton {
                 background-color: #e0e0e0;
@@ -405,57 +499,231 @@ class MainWindow(QMainWindow):
                 background-color: #c0c0c0;
             }
         """
-        
+
         self.btn_start = QPushButton("▶ Start")
         self.btn_start.setStyleSheet(default_style)
         self.btn_start.setFixedHeight(40)
         self.btn_start.clicked.connect(self.start_simulation)
-        
+
         self.btn_stop = QPushButton("⏸ Stop")
         self.btn_stop.setStyleSheet(default_style)
         self.btn_stop.setFixedHeight(40)
         self.btn_stop.clicked.connect(self.stop_simulation)
-        
+
         self.btn_clear = QPushButton("🗑 Clear All")
         self.btn_clear.setStyleSheet(default_style)
         self.btn_clear.setFixedHeight(40)
         self.btn_clear.clicked.connect(self.clear_ships)
-        
+
         self.btn_rec = QPushButton("🔴 Start Rec")
         self.btn_rec.setStyleSheet(default_style)
         self.btn_rec.setFixedHeight(40)
         self.btn_rec.setEnabled(False)
         self.btn_rec.clicked.connect(self.toggle_recording)
-        
+
         self.btn_analysis = QPushButton("📊 ColReg analysis")
         self.btn_analysis.setStyleSheet(default_style)
         self.btn_analysis.setFixedHeight(40)
         self.btn_analysis.clicked.connect(self.open_collision_analysis)
 
-        self.btn_llm_decisions = QPushButton("🤖 LLM Decisions")
+        self.btn_llm_decisions = QPushButton(" LLM Decisions")
         self.btn_llm_decisions.setStyleSheet(default_style)
         self.btn_llm_decisions.setFixedHeight(40)
         self.btn_llm_decisions.clicked.connect(self.open_llm_decisions)
-        toolbar_layout.addWidget(self.btn_llm_decisions)
-        
+
+        # Кнопка создания маршрута
+        self.btn_create_route = QPushButton("🛤 Create Route")
+        self.btn_create_route.setStyleSheet("""
+            QPushButton {
+                background-color: #FFD700;
+                color: black;
+                font-size: 12px;
+                font-weight: bold;
+                padding: 8px;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #FFC700;
+            }
+        """)
+        self.btn_create_route.clicked.connect(self.toggle_route_mode)
+
         toolbar_layout.addWidget(self.btn_start)
         toolbar_layout.addWidget(self.btn_stop)
         toolbar_layout.addWidget(self.btn_clear)
         toolbar_layout.addWidget(self.btn_rec)
         toolbar_layout.addWidget(self.btn_analysis)
         toolbar_layout.addWidget(self.btn_llm_decisions)
+        toolbar_layout.addWidget(self.btn_create_route)
         toolbar_layout.addStretch()
-        
+
         main_layout.addWidget(toolbar)
-        
-        # Canvas занимает все оставшееся пространство
-        self.canvas = ShipCanvas()
+
+        # Canvas
+        self.canvas = ShipCanvas(use_miles=self.use_miles, use_knots=self.use_knots)
         self.canvas.on_click_callback = self.on_empty_field_click
         self.canvas.on_ship_click_callback = self.on_ship_click
         self.canvas.on_mouse_move_callback = self.on_mouse_move
+        # Callback для ПКМ на точке маршрута
+        self.canvas.on_route_point_click_callback = self.on_route_point_right_click
+        # Callback для перемещения точки маршрута (ЛКМ drag)
+        self.canvas.on_route_point_moved_callback = self.on_route_point_moved
         main_layout.addWidget(self.canvas, stretch=1)
-        
+
         self.statusBar().showMessage("Ready. Use the menus at the top.")
+
+    # ========== МАРШРУТЫ ==========
+
+    def toggle_route_mode(self):
+        """Включить/выключить режим создания маршрута"""
+        # Если уже в режиме редактирования — выйти из него
+        if self.editing_route is not None:
+            self.editing_route = None
+            self.canvas.editing_route = None
+            if hasattr(self, 'route_dialog') and self.route_dialog:
+                self.route_dialog.close()
+                self.route_dialog = None
+
+        self.route_mode = not self.route_mode
+
+        if self.route_mode:
+            # Создать новый маршрут
+            self.current_route = Route()
+            self.routes.append(self.current_route)
+
+            # Открыть НЕМодальное окно диалога маршрута
+            self.route_dialog = RouteDialog(self.current_route, self.ships, self, is_editing=False)
+            self.route_dialog.show()
+
+            # Связать сигнал закрытия диалога с обработчиком
+            self.route_dialog.route_updated.connect(self.on_route_dialog_closed)
+
+            # Обновить canvas
+            self.canvas.update_plot(
+                self.ships, self.running, self.simulation_time,
+                use_miles=self.use_miles, use_knots=self.use_knots,
+                predicted_tracks=self.predicted_tracks,
+                routes=self.routes
+            )
+            self.statusBar().showMessage(
+                "Route creation mode: RMB on canvas to add waypoints"
+            )
+        else:
+            self.route_mode = False
+            if hasattr(self, 'route_dialog') and self.route_dialog:
+                self.route_dialog.close()
+                self.route_dialog = None
+
+    def on_route_dialog_closed(self):
+        """Вызывается при закрытии диалога маршрута"""
+        self.route_mode = False
+
+        # Если маршрут не завершён (меньше 2 точек) — удалить его
+        if self.current_route and len(self.current_route.points) < 2:
+            if self.current_route in self.routes:
+                self.routes.remove(self.current_route)
+
+        self.current_route = None
+
+        # Обновить canvas
+        self.canvas.update_plot(
+            self.ships, self.running, self.simulation_time,
+            use_miles=self.use_miles, use_knots=self.use_knots,
+            predicted_tracks=self.predicted_tracks,
+            routes=self.routes
+        )
+
+    def add_route_point(self, x, y):
+        """Добавить точку в текущий маршрут"""
+        if self.route_mode and self.current_route:
+            self.current_route.add_point(x, y)
+
+            # Обновить таблицу в диалоге, если он открыт
+            if hasattr(self, 'route_dialog') and self.route_dialog:
+                self.route_dialog.refresh_from_route()
+
+            # Обновить canvas
+            self.canvas.update_plot(
+                self.ships, self.running, self.simulation_time,
+                use_miles=self.use_miles, use_knots=self.use_knots,
+                predicted_tracks=self.predicted_tracks,
+                routes=self.routes
+            )
+
+    def on_route_point_right_click(self, route, point_index, x, y):
+        """Обработка ПКМ на точке маршрута — показать контекстное меню"""
+        menu = QMenu(self)
+
+        action_edit = QAction("✏️ Edit Route", self)
+        action_edit.triggered.connect(lambda: self.edit_route(route))
+        menu.addAction(action_edit)
+
+        action_delete = QAction("🗑 Delete Route", self)
+        action_delete.triggered.connect(lambda: self.delete_route(route))
+        menu.addAction(action_delete)
+
+        menu.exec_(QCursor.pos())
+
+    def delete_route(self, route):
+        """Удалить маршрут"""
+        if route in self.routes:
+            self.routes.remove(route)
+
+        # Если редактировали этот маршрут — закрыть диалог
+        if self.editing_route is route:
+            self.editing_route = None
+            self.canvas.editing_route = None
+            if hasattr(self, 'route_dialog') and self.route_dialog:
+                self.route_dialog.close()
+                self.route_dialog = None
+
+        self.canvas.update_plot(
+            self.ships, self.running, self.simulation_time,
+            use_miles=self.use_miles, use_knots=self.use_knots,
+            predicted_tracks=self.predicted_tracks,
+            routes=self.routes
+        )
+        self.statusBar().showMessage(f"Route {route.name} deleted")
+
+    def edit_route(self, route):
+        """Открыть маршрут в режиме редактирования"""
+        # Сбросить режим создания если был
+        self.route_mode = False
+        self.current_route = None
+
+        # Установить режим редактирования
+        self.editing_route = route
+        self.canvas.editing_route = route
+
+        # Открыть диалог редактирования
+        self.route_dialog = RouteDialog(route, self.ships, self, is_editing=True)
+        self.route_dialog.show()
+        self.route_dialog.route_updated.connect(self.on_route_dialog_closed)
+
+        self.canvas.update_plot(
+            self.ships, self.running, self.simulation_time,
+            use_miles=self.use_miles, use_knots=self.use_knots,
+            predicted_tracks=self.predicted_tracks,
+            routes=self.routes
+        )
+        self.statusBar().showMessage(
+            f"Editing route {route.name} — LMB drag points, RMB for menu"
+        )
+
+    def on_route_point_moved(self, route, point_index):
+        """Вызывается при перемещении точки маршрута"""
+        # Обновить таблицу в диалоге
+        if hasattr(self, 'route_dialog') and self.route_dialog:
+            self.route_dialog.refresh_from_route()
+
+        self.canvas.update_plot(
+            self.ships, self.running, self.simulation_time,
+            use_miles=self.use_miles, use_knots=self.use_knots,
+            predicted_tracks=self.predicted_tracks,
+            routes=self.routes
+        )
+
+    # ========== ОСТАЛЬНЫЕ МЕТОДЫ ==========
 
     def on_mouse_move(self, x, y):
         if self.move_mode:
@@ -535,7 +803,7 @@ class MainWindow(QMainWindow):
             f = open(filename, 'w', newline='')
             writer = csv.writer(f)
             writer.writerow(['time_s', 'x_m', 'y_m',
-                             'course_deg', 'speed_ms', 'rudder_deg', 'rpm_percent'])
+                             'course_deg', 'speed_ms', 'rudder_deg', 'rpm_percent', 'rot_deg_min'])
             self.log_files[ship.name] = (f, writer)
         except Exception as e:
             print(f"Failed to open log file for {ship.name}: {e}")
@@ -571,22 +839,36 @@ class MainWindow(QMainWindow):
         self.log_files.clear()
 
     def on_empty_field_click(self, x, y):
+        """Обработка клика по пустому полю (ПКМ)"""
+        # Если режим создания маршрута - добавить точку
+        if self.route_mode:
+            self.add_route_point(x, y)
+            return
+
         if self.move_mode and self.move_ship:
             self.complete_move_ship(x, y)
             return
-        dialog = AddShipDialog(x, y, self)
+
+        dialog = AddShipDialog(x, y, self, use_knots=self.use_knots)
         if dialog.exec_() == QDialog.Accepted:
             name, course, speed = dialog.get_values()
             if course is not None and speed is not None:
                 ship = Ship(x, y, course, speed, name)
+                ship.set_base_heading(course)
                 self.ships.append(ship)
                 if self.recording:
                     self.open_log_file(ship)
+                speed_text = format_speed(speed, self.use_knots)
                 self.statusBar().showMessage(
                     f"Added: {ship.name} | ({x:.0f}, {y:.0f}) | "
-                    f"Course: {course}° | Speed: {speed} m/s")
+                    f"Course: {course}° | Speed: {speed_text}")
                 self.update_rec_button_state()
-                self.canvas.update_plot(self.ships, self.running, self.simulation_time)
+                self.canvas.update_plot(
+                    self.ships, self.running, self.simulation_time,
+                    use_miles=self.use_miles, use_knots=self.use_knots,
+                    predicted_tracks=self.predicted_tracks,
+                    routes=self.routes
+                )
             else:
                 QMessageBox.warning(self, "Error", "Invalid course or speed values")
 
@@ -603,7 +885,27 @@ class MainWindow(QMainWindow):
         action_options = QAction("⚙️ Options", self)
         action_options.triggered.connect(lambda: self.open_ship_options(ship))
         menu.addAction(action_options)
+        # === НОВЫЙ ПУНКТ: Autopilot Debug ===
+        action_autopilot = QAction("🤖 Autopilot", self)
+        action_autopilot.triggered.connect(lambda: self.open_autopilot_debug(ship))
+        menu.addAction(action_autopilot)
+
         menu.exec_(QCursor.pos())
+
+    def open_autopilot_debug(self, ship):
+        """Открыть окно отладки авторулевого"""
+        # Если диалог уже открыт для этого судна — просто показать
+        if (self.autopilot_debug_dialog is not None and 
+                self.autopilot_debug_dialog.ship == ship and
+                self.autopilot_debug_dialog.isVisible()):
+            self.autopilot_debug_dialog.show()
+            self.autopilot_debug_dialog.raise_()
+            self.autopilot_debug_dialog.activateWindow()
+            return
+        
+        # Создать новый диалог
+        self.autopilot_debug_dialog = AutopilotDebugDialog(ship, self)
+        self.autopilot_debug_dialog.show()
 
     def start_move_ship(self, ship):
         self.move_mode = True
@@ -629,23 +931,31 @@ class MainWindow(QMainWindow):
             x, y, self,
             default_course=current_course,
             default_speed=current_speed,
-            default_name=current_name
+            default_name=current_name,
+            use_knots=self.use_knots
         )
         if dialog.exec_() == QDialog.Accepted:
             name, course, speed = dialog.get_values()
             if course is not None and speed is not None:
                 new_ship = Ship(x, y, course, speed, name)
+                new_ship.set_base_heading(course)
                 self.ships.append(new_ship)
                 if self.recording:
                     self.open_log_file(new_ship)
+                speed_text = format_speed(speed, self.use_knots)
                 self.statusBar().showMessage(
                     f"Moved: {new_ship.name} | ({x:.0f}, {y:.0f}) | "
-                    f"Course: {course}° | Speed: {speed} m/s")
+                    f"Course: {course}° | Speed: {speed_text}")
         else:
             self.ships.append(ship)
             self.statusBar().showMessage(f"Move cancelled: {ship.name} remains at original position")
         self.update_rec_button_state()
-        self.canvas.update_plot(self.ships, self.running, self.simulation_time)
+        self.canvas.update_plot(
+            self.ships, self.running, self.simulation_time,
+            use_miles=self.use_miles, use_knots=self.use_knots,
+            predicted_tracks=self.predicted_tracks,
+            routes=self.routes
+        )
 
     def cancel_move_ship(self):
         if self.move_mode:
@@ -662,17 +972,27 @@ class MainWindow(QMainWindow):
             self.ships.remove(ship)
         self.statusBar().showMessage(f"Deleted: {ship.name}")
         self.update_rec_button_state()
-        self.canvas.update_plot(self.ships, self.running, self.simulation_time)
+        self.canvas.update_plot(
+            self.ships, self.running, self.simulation_time,
+            use_miles=self.use_miles, use_knots=self.use_knots,
+            predicted_tracks=self.predicted_tracks,
+            routes=self.routes
+        )
 
     def open_ship_options(self, ship):
         if self.move_mode:
             self.cancel_move_ship()
-        dialog = ControlDialog(ship, self)
+        dialog = ControlDialog(ship, self, use_knots=self.use_knots)
         dialog.exec_()
         llm_status = "LLM enabled" if ship.llm_controlled else "Manual control"
         self.statusBar().showMessage(
             f"{ship.name}: {llm_status} | Rudder={ship.rudder_cmd}°, RPM={ship.rpm_cmd}%")
-        self.canvas.update_plot(self.ships, self.running, self.simulation_time)
+        self.canvas.update_plot(
+            self.ships, self.running, self.simulation_time,
+            use_miles=self.use_miles, use_knots=self.use_knots,
+            predicted_tracks=self.predicted_tracks,
+            routes=self.routes
+        )
 
     def toggle_llm_for_all(self):
         llm_enabled = not any(s.llm_controlled for s in self.ships)
@@ -694,16 +1014,23 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(
                 f"LLM ({coordinator.PROVIDERS[self.current_provider]['name']}) "
                 f"enabled for all vessels")
-            self.action_llm_toggle.setText("⏹ Disable LLM for all vessels")
+            self.action_llm_toggle.setText(" Disable LLM for all vessels")
         else:
             self.statusBar().showMessage("LLM control disabled")
-            self.action_llm_toggle.setText("🤖 Enable LLM for all vessels")
+            self.action_llm_toggle.setText(" Enable LLM for all vessels")
         self.update_llm_status_display()
-        self.canvas.update_plot(self.ships, self.running, self.simulation_time)
+        self.canvas.update_plot(
+            self.ships, self.running, self.simulation_time,
+            use_miles=self.use_miles, use_knots=self.use_knots,
+            predicted_tracks=self.predicted_tracks,
+            routes=self.routes
+        )
 
     def open_collision_analysis(self):
+        """Открыть окно анализа столкновений"""
         if self.analysis_window is None:
-            self.analysis_window = launch_collision_analysis(self.ships)
+            # ВАЖНО: передаем callable, чтобы окно видело актуальный список судов
+            self.analysis_window = launch_collision_analysis(lambda: self.ships, self)
         else:
             self.analysis_window.show()
             self.analysis_window.raise_()
@@ -712,13 +1039,23 @@ class MainWindow(QMainWindow):
     def open_llm_decisions(self):
         if self.llm_decisions_window is None:
             self.llm_decisions_window = launch_llm_decisions_window(
-                self.ships, 
+                self.ships,
                 self.llm_coordinator
             )
         else:
             self.llm_decisions_window.show()
             self.llm_decisions_window.raise_()
             self.llm_decisions_window.activateWindow()
+
+    def open_safe_passing_calculator(self):
+        """Открыть калькулятор безопасного расхождения"""
+        if len(self.ships) < 2:
+            QMessageBox.warning(
+                self, "Not enough vessels",
+                "Need at least 2 vessels to calculate safe passing."
+            )
+            return
+        launch_safe_passing_calculator(self.ships, self)
 
     def start_simulation(self):
         if not self.running:
@@ -776,117 +1113,141 @@ class MainWindow(QMainWindow):
             self.toggle_recording()
         if self.move_mode:
             self.cancel_move_ship()
+        
+        # Сброс авторулевых
+        for ship in self.ships:
+            ship.autopilot_enabled = False
+            ship.autopilot = None
+            ship.assigned_route = None
+        
         self.ships.clear()
+        self.routes.clear()
+        self.current_route = None
+        self.editing_route = None
+        self.route_mode = False
+        
+        if hasattr(self, 'route_dialog') and self.route_dialog:
+            self.route_dialog.close()
+            self.route_dialog = None
+        
         Ship._counter = 0
         self.simulation_time = 0.0
         self.last_llm_update = 0.0
-        self.statusBar().showMessage("All vessels cleared")
+        self.statusBar().showMessage("All vessels and routes cleared")
         self.update_rec_button_state()
-        self.canvas.update_plot(self.ships, self.running, self.simulation_time)
+        
+        self.canvas.update_plot(
+            self.ships, self.running, self.simulation_time,
+            use_miles=self.use_miles, use_knots=self.use_knots,
+            predicted_tracks=self.predicted_tracks,
+            routes=self.routes
+        )
 
     def collect_collision_data(self):
-        """
-        Собрать данные для LLM в формате {'ships': [...]}
-        """
         from colreg_rules import determine_colreg_situation
         from collision_analyzer import CollisionAnalyzer
-        
         analyzer = CollisionAnalyzer()
         ship_data_list = []
         
         for ship in self.ships:
             pairs_info = []
             must_yield = False
-            no_left_turn = False
-            all_passed = True
-            
             for other in self.ships:
-                if other is ship:
-                    continue
-                
-                cpa_data = analyzer.calculate_cpa_tcpa(ship, other)
-                colreg = determine_colreg_situation(
-                    ship, other,
-                    cpa_data['dist'], cpa_data['DCPA'], cpa_data['TCPA']
-                )
-                
+                if other is ship: continue
+                cpa = analyzer.calculate_cpa_tcpa(ship, other)
+                colreg = determine_colreg_situation(ship, other, cpa['dist'], cpa['DCPA'], cpa['TCPA'])
                 action = colreg['ship1_action']
-                if 'Give-way' in action or 'Alter' in action or 'Change' in action:
-                    role = 'GIVE_WAY'
-                    must_yield = True
-                elif 'Stand on' in action:
-                    role = 'STAND_ON'
-                else:
-                    role = 'BOTH_ALTER'
-                    must_yield = True
-                
-                # Проверяем пересечение по носу
-                crossing = analyzer.calculate_course_crossing(ship, other)
-                crosses_ahead = None
-                if crossing['crossing_type']:
-                    if crossing['crosses_1_by_2']:
-                        crosses_ahead = f"{other.name} crosses {ship.name} ahead"
-                    elif crossing['crosses_2_by_1']:
-                        crosses_ahead = f"{ship.name} crosses {other.name} ahead"
-                
-                if role == 'GIVE_WAY' and crosses_ahead and f"{other.name} crosses" in crosses_ahead:
-                    no_left_turn = True
-                
-                # Проверяем, разошлись ли суда
-                tcpa_val = cpa_data['TCPA']
-                if np.isinf(tcpa_val) or tcpa_val > 0:
-                    all_passed = False
+                if 'Give-way' in action or 'Alter' in action: must_yield = True
                 
                 pairs_info.append({
                     'other_ship': other.name,
                     'rule': colreg['rule'],
-                    'role': role,
-                    'cpa_m': float(cpa_data['DCPA']),
-                    'tcpa_s': float(tcpa_val) if not np.isinf(tcpa_val) else 99999.0,
-                    'crosses_ahead': crosses_ahead
+                    'cpa_m': float(cpa['DCPA']),
+                    'tcpa_s': float(cpa['TCPA']) if cpa['TCPA'] != float('inf') else 99999.0
                 })
+                
+            status = 'MUST_YIELD' if must_yield else 'HOLD_COURSE'
             
-            # Определяем статус
-            current_heading = ship.get_heading_deg()
-            heading_diff = abs((ship.base_heading_deg - current_heading + 180) % 360 - 180)
-            returning = all_passed and heading_diff > 2 and ship.in_maneuver
-            
-            if returning:
-                status = 'RETURN_TO_COURSE'
-            elif must_yield:
-                status = 'MUST_YIELD'
-            else:
-                status = 'HOLD_COURSE'
-            
+            # Статус авторулевого и дистанция до маршрута
+            ap_enabled = getattr(ship, 'autopilot_enabled', False)
+            dist_to_route = None
+            if ap_enabled and getattr(ship, 'assigned_route', None):
+                pts = ship.assigned_route.points
+                if len(pts) >= 2:
+                    sx, sy = np.array([ship.x, ship.y])
+                    min_d = float('inf')
+                    for i in range(len(pts)-1):
+                        p1 = np.array([pts[i].x, pts[i].y])
+                        p2 = np.array([pts[i+1].x, pts[i+1].y])
+                        v = p2-p1; sl = np.dot(v,v)
+                        if sl > 0:
+                            t = np.clip(np.dot(sx-p1, v)/sl, 0, 1)
+                            min_d = min(min_d, np.linalg.norm(sx - (p1+t*v)))
+                    dist_to_route = min_d
+
             ship_data_list.append({
                 'name': ship.name,
-                'current_heading_deg': float(current_heading),
+                'current_heading_deg': float(ship.get_heading_deg()),
                 'base_heading_deg': float(ship.base_heading_deg),
-                'heading_diff_deg': float(heading_diff),
                 'speed_ms': float(ship.u),
                 'current_rudder': float(ship.rudder_cmd),
                 'current_rpm': float(ship.rpm_cmd),
                 'status': status,
-                'no_left_turn': no_left_turn,
+                'autopilot_enabled': ap_enabled,
+                'distance_to_route_m': dist_to_route,
+                'pairs': pairs_info,
+                # === НОВЫЕ ПОЛЯ ДЛЯ КОНТРОЛЯ МАНЕВРА ===
                 'in_maneuver': ship.in_maneuver,
-                'pairs': pairs_info
+                'maneuver_course_deg': ship.maneuver_course_deg,
+                'maneuver_target_course': ship.maneuver_target_course,
             })
-        
         return {'ships': ship_data_list}
 
     def on_llm_result(self, commands):
+        """Обработка команд от LLM с отслеживанием маневра"""
         self.llm_pending = False
+        
         if self.llm_coordinator:
             self.llm_coordinator.apply_commands(self.ships, commands)
-
-        # Сбрасываем флаг манёвра для судов, которые вернулись на курс
+        
+        # Обработка маневров для всех LLM-судов
         for ship in self.ships:
-            if ship.llm_controlled:
-                heading_diff = abs((ship.base_heading_deg - ship.get_heading_deg() + 180) % 360 - 180)
-                if heading_diff < 2 and ship.rudder_cmd == 0:
+            if not ship.llm_controlled:
+                continue
+            
+            # Определяем, находится ли судно в режиме авторулевого HOLD
+            autopilot = getattr(ship, 'autopilot', None)
+            autopilot_enabled = getattr(ship, 'autopilot_enabled', False)
+            
+            if autopilot_enabled and autopilot and autopilot.mode == 1:  # MODE_HOLD_COURSE
+                # Судно в режиме удержания курса от LLM
+                current_heading = ship.get_heading_deg()
+                target_course = autopilot.hold_course_rad
+                
+                if target_course is not None:
+                    target_deg = np.degrees(target_course)
+                    heading_diff = abs((current_heading - target_deg + 180) % 360 - 180)
+                    
+                    # Если судно вышло на заданный курс (±5°)
+                    if heading_diff <= 5.0:
+                        # Маневр завершен
+                        if ship.in_maneuver:
+                            ship.in_maneuver = False
+                            ship.maneuver_course_deg = None
+                            ship.maneuver_target_course = None
+                            print(f"[Maneuver] {ship.name}: COMPLETED - reached target course {target_deg:.1f}°")
+                    else:
+                        # Судно еще не вышло на курс
+                        if not ship.in_maneuver:
+                            ship.in_maneuver = True
+                            ship.maneuver_target_course = target_deg
+                            print(f"[Maneuver] {ship.name}: STARTED - target {target_deg:.1f}°, current {current_heading:.1f}°")
+            else:
+                # Судно не в режиме HOLD - маневр не активен
+                if ship.in_maneuver:
                     ship.in_maneuver = False
-
-        self.statusBar().showMessage(f"LLM commands applied at t={self.simulation_time:.1f}s")
+                    ship.maneuver_course_deg = None
+                    ship.maneuver_target_course = None
 
     def on_llm_error(self, error_msg):
         self.llm_pending = False
@@ -906,27 +1267,26 @@ class MainWindow(QMainWindow):
 
     def simulation_step(self):
         if self.running:
+            # Запрос LLM
             llm_ships = [s for s in self.ships if s.llm_controlled]
-            
-            if (llm_ships and 
-                    (self.simulation_time - self.last_llm_update >= self.llm_update_interval) and
-                    not self.llm_pending):
-                collision_data = self.collect_collision_data()
-                if collision_data:
-                    self.start_llm_worker(collision_data)
+            if llm_ships and (self.simulation_time - self.last_llm_update >= self.llm_update_interval) and not self.llm_pending:
+                self.start_llm_worker(self.collect_collision_data())
                 self.last_llm_update = self.simulation_time
-            
+
+            # Физика и авторулевой
             for ship in self.ships:
-                # Помечаем судно как "в манёвре", если оно отклонилось от курса
-                heading_diff = abs((ship.base_heading_deg - ship.get_heading_deg() + 180) % 360 - 180)
-                if heading_diff > 2:
-                    ship.in_maneuver = True
-                
+                if getattr(ship, 'autopilot_enabled', False) and ship.autopilot:
+                    ship.autopilot.update(self.dt)
+                else:
+                    hd = abs((ship.base_heading_deg - ship.get_heading_deg() + 180) % 360 - 180)
+                    if hd > 2: ship.in_maneuver = True
                 ship.update(self.dt)
                 self.log_ship_state(ship)
-            
+                
             self.simulation_time += self.dt
-            self.canvas.update_plot(self.ships, self.running, self.simulation_time)
+            self.canvas.update_plot(self.ships, self.running, self.simulation_time, 
+                                    self.use_miles, self.use_knots, self.predicted_tracks, self.routes)
+
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

@@ -1,18 +1,26 @@
+"""
+canvas.py
+Холст для отображения судов, маршрутов и прогнозируемых треков
+"""
 import numpy as np
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import QSizePolicy
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from matplotlib.patches import Polygon, Rectangle
+from matplotlib.ticker import FuncFormatter
+from matplotlib.lines import Line2D
+
 
 class ShipCanvas(FigureCanvas):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, use_miles=True, use_knots=True):
         self.fig = Figure(dpi=100)
         self.ax = self.fig.add_subplot(111)
         super().__init__(self.fig)
         self.setParent(parent)
+
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        
+
         self.view_center_x = 0.0
         self.view_center_y = 0.0
         self.view_scale = 5000.0
@@ -24,30 +32,45 @@ class ShipCanvas(FigureCanvas):
         self.pan_start_center = None
         self.vector_length_minutes = 12.0
         self.track_length_meters = 5000.0
-        
-        # Убираем все отступы - график занимает всю область окна
+
+        # Единицы измерения
+        self.use_miles = use_miles
+        self.use_knots = use_knots
+
+        # Прогнозируемые треки и маршруты
+        self.predicted_tracks = {}
+        self.routes = []
+
+        # Режим редактирования маршрута
+        self.editing_route = None
+        self.dragging_point_index = None
+        self.route_point_click_radius = 80  # радиус захвата точки маршрута (пиксели)
+
+        # Убираем все отступы
         self.fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
-        
+
         self.ax.set_xlim(-self.view_scale, self.view_scale)
         self.ax.set_ylim(-self.view_scale, self.view_scale)
-        
+
         # Метки ВНУТРИ области построения
-        self.ax.tick_params(axis='both', which='both', direction='in', 
+        self.ax.tick_params(axis='both', which='both', direction='in',
                             top=True, right=True, left=True, bottom=True)
         self.ax.tick_params(axis='x', which='both', pad=-15)
-        self.ax.tick_params(axis='y', which='both', pad=-40)  # было -40, стало -60
-        
+        self.ax.tick_params(axis='y', which='both', pad=-40)
+
         self.ax.grid(True, alpha=0.5)
-        
+
         self.mpl_connect('button_press_event', self.on_click)
         self.mpl_connect('motion_notify_event', self.on_motion)
         self.mpl_connect('button_release_event', self.on_release)
         self.mpl_connect('scroll_event', self.on_scroll)
-        
+
         self.ships = []
         self.on_click_callback = None
         self.on_ship_click_callback = None
         self.on_mouse_move_callback = None
+        self.on_route_point_click_callback = None
+        self.on_route_point_moved_callback = None
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -55,38 +78,104 @@ class ShipCanvas(FigureCanvas):
         h = event.size().height()
         if w > 0 and h > 0:
             self.fig.set_size_inches(w / self.fig.dpi, h / self.fig.dpi)
-            self.update_plot(self.ships, False, 0.0)
+            # Передаём все параметры с именами
+            self.update_plot(
+                self.ships, False, 0.0,
+                use_miles=self.use_miles,
+                use_knots=self.use_knots,
+                predicted_tracks=self.predicted_tracks,
+                routes=self.routes
+            )
 
     def _get_view_limits(self):
         bbox = self.ax.get_window_extent()
         if bbox.width == 0 or bbox.height == 0:
-            return (-self.view_scale, self.view_scale, 
+            return (-self.view_scale, self.view_scale,
                     -self.view_scale, self.view_scale)
-        
+
         window_aspect = bbox.width / bbox.height
         base_range = self.view_scale
-        
+
         if window_aspect > 1.0:
             x_range = base_range * window_aspect
             y_range = base_range
         else:
             x_range = base_range
             y_range = base_range / window_aspect
-        
+
         return (self.view_center_x - x_range, self.view_center_x + x_range,
                 self.view_center_y - y_range, self.view_center_y + y_range)
+
+    def get_clicked_route_point(self, x, y):
+        """
+        Проверить, попал ли клик на точку маршрута.
+        Возвращает (route, point_index) или (None, None).
+        """
+        if x is None or y is None:
+            return None, None
+
+        # Преобразуем координаты в пиксели для сравнения
+        bbox = self.ax.get_window_extent()
+        xlim = self.ax.get_xlim()
+        ylim = self.ax.get_ylim()
+
+        if (xlim[1] - xlim[0]) == 0 or (ylim[1] - ylim[0]) == 0:
+            return None, None
+
+        pixels_per_data_x = bbox.width / (xlim[1] - xlim[0])
+        pixels_per_data_y = bbox.height / (ylim[1] - ylim[0])
+
+        for route in self.routes:
+            for i, point in enumerate(route.points):
+                dx_pix = (point.x - x) * pixels_per_data_x
+                dy_pix = (point.y - y) * pixels_per_data_y
+                dist_pix = np.sqrt(dx_pix**2 + dy_pix**2)
+
+                if dist_pix <= self.route_point_click_radius:
+                    return route, i
+
+        return None, None
 
     def on_click(self, event):
         if event.inaxes != self.ax:
             return
+
         if event.button == 1:
+            # ЛКМ — если в режиме перетаскивания точки маршрута
+            if self.dragging_point_index is not None and self.editing_route:
+                # Перемещаем точку маршрута
+                route = self.editing_route
+                idx = self.dragging_point_index
+                if 0 <= idx < len(route.points):
+                    route.points[idx].x = event.xdata
+                    route.points[idx].y = event.ydata
+                    route._recalculate()
+                    self.draw()
+                    # Уведомить родительское окно об изменении
+                    if self.on_route_point_moved_callback:
+                        self.on_route_point_moved_callback(route, idx)
+                return
+
+            # Иначе — стандартное панорамирование
             self.is_panning = True
             self.pan_start_pos = (event.x, event.y)
             self.pan_start_center = (self.view_center_x, self.view_center_y)
             self.setCursor(Qt.ClosedHandCursor)
             return
+
         if event.button == 3:
             x, y = event.xdata, event.ydata
+
+            # Проверяем клик на точку маршрута
+            route, point_idx = self.get_clicked_route_point(x, y)
+
+            if route is not None and point_idx is not None:
+                # Если есть callback для клика на точку маршрута — вызываем его
+                if self.on_route_point_click_callback:
+                    self.on_route_point_click_callback(route, point_idx, x, y)
+                return
+
+            # Стандартная логика ПКМ
             clicked_ship = None
             click_radius = max(60, self.view_scale * 0.02)
             for ship in self.ships:
@@ -107,34 +196,53 @@ class ShipCanvas(FigureCanvas):
             bbox = self.ax.get_window_extent()
             if bbox.width == 0 or bbox.height == 0:
                 return
-            
+
             xlim = self.ax.get_xlim()
             ylim = self.ax.get_ylim()
             data_width = xlim[1] - xlim[0]
             data_height = ylim[1] - ylim[0]
-            
+
             pixels_per_data_x = bbox.width / data_width
             pixels_per_data_y = bbox.height / data_height
-            
+
             dx_data = dx_pix / pixels_per_data_x
             dy_data = -dy_pix / pixels_per_data_y
-            
+
             self.view_center_x = self.pan_start_center[0] - dx_data
             self.view_center_y = self.pan_start_center[1] + dy_data
-            
+
             x_min, x_max, y_min, y_max = self._get_view_limits()
             self.ax.set_xlim(x_min, x_max)
             self.ax.set_ylim(y_min, y_max)
             self.draw()
-        
+
+        # Если перетаскиваем точку маршрута
+        if (self.dragging_point_index is not None and 
+                self.editing_route and event.inaxes == self.ax):
+            route = self.editing_route
+            idx = self.dragging_point_index
+            if 0 <= idx < len(route.points):
+                route.points[idx].x = event.xdata
+                route.points[idx].y = event.ydata
+                route._recalculate()
+                self.draw()
+                if self.on_route_point_moved_callback:
+                    self.on_route_point_moved_callback(route, idx)
+
         if event.inaxes == self.ax and event.xdata is not None and event.ydata is not None:
             if self.on_mouse_move_callback:
                 self.on_mouse_move_callback(event.xdata, event.ydata)
 
     def on_release(self, event):
-        if event.button == 1 and self.is_panning:
-            self.is_panning = False
-            self.setCursor(Qt.OpenHandCursor)
+        if event.button == 1:
+            if self.dragging_point_index is not None:
+                # Завершаем перетаскивание точки маршрута
+                self.dragging_point_index = None
+                self.setCursor(Qt.OpenHandCursor)
+                return
+            if self.is_panning:
+                self.is_panning = False
+                self.setCursor(Qt.OpenHandCursor)
 
     def on_scroll(self, event):
         if event.inaxes != self.ax:
@@ -143,9 +251,9 @@ class ShipCanvas(FigureCanvas):
             self.view_scale /= self.zoom_factor
         elif event.button == 'down':
             self.view_scale *= self.zoom_factor
-        
+
         self.view_scale = np.clip(self.view_scale, self.min_scale, self.max_scale)
-        
+
         x_min, x_max, y_min, y_max = self._get_view_limits()
         self.ax.set_xlim(x_min, x_max)
         self.ax.set_ylim(y_min, y_max)
@@ -162,34 +270,189 @@ class ShipCanvas(FigureCanvas):
                                          lw=0.5, mutation_scale=15), zorder=6)
 
     def _apply_tick_style(self):
-        """Применяет стиль меток: сдвиг внутрь + белая подложка для читаемости"""
-        self.ax.tick_params(axis='both', which='both', direction='in', 
+        """Применяет стиль меток"""
+        self.ax.tick_params(axis='both', which='both', direction='in',
                             top=True, right=True, left=True, bottom=True)
         self.ax.tick_params(axis='x', which='both', pad=-15)
-        self.ax.tick_params(axis='y', which='both', pad=-40)  # глубокий сдвиг вправо
-        
-        # Белая подложка под цифры, чтобы они читались поверх сетки и линий
+        self.ax.tick_params(axis='y', which='both', pad=-40)
+
         for label in self.ax.get_yticklabels() + self.ax.get_xticklabels():
-            label.set_bbox(dict(boxstyle='round,pad=0.2', facecolor='white', 
+            label.set_bbox(dict(boxstyle='round,pad=0.2', facecolor='white',
                                 alpha=0.85, edgecolor='none'))
             label.set_color('black')
             label.set_fontsize(8)
 
-    def update_plot(self, ships, running, simulation_time):
+    def update_plot(self, ships, running, simulation_time,
+                    use_miles=None, use_knots=None,
+                    predicted_tracks=None, routes=None):
+        """
+        Обновить график.
+        """
+        # Инициализация значений по умолчанию
+        if predicted_tracks is None:
+            predicted_tracks = {}
+        if routes is None:
+            routes = []
+
+        # Сохраняем параметры
+        if use_miles is not None:
+            self.use_miles = use_miles
+        if use_knots is not None:
+            self.use_knots = use_knots
+
+        self.predicted_tracks = predicted_tracks
+        self.routes = routes
         self.ships = ships
+
         self.ax.clear()
-        
+
         x_min, x_max, y_min, y_max = self._get_view_limits()
         self.ax.set_xlim(x_min, x_max)
         self.ax.set_ylim(y_min, y_max)
-        
+
         self.ax.set_aspect('equal')
-        
+
         # Применяем стиль меток после clear()
         self._apply_tick_style()
-        
+
+        # Форматирование меток осей
+        if self.use_miles:
+            def format_axis_miles(x, pos):
+                miles = x / 1852.0
+                if abs(miles) >= 1:
+                    return f"{miles:.1f}"
+                else:
+                    return f"{miles:.2f}"
+
+            self.ax.xaxis.set_major_formatter(FuncFormatter(format_axis_miles))
+            self.ax.yaxis.set_major_formatter(FuncFormatter(format_axis_miles))
+            self.ax.set_xlabel("Distance (nm)", fontsize=9, color='black')
+            self.ax.set_ylabel("Distance (nm)", fontsize=9, color='black')
+        else:
+            def format_axis_meters(x, pos):
+                if abs(x) >= 1000:
+                    return f"{x / 1000:.1f}"
+                return f"{x:.0f}"
+
+            self.ax.xaxis.set_major_formatter(FuncFormatter(format_axis_meters))
+            self.ax.yaxis.set_major_formatter(FuncFormatter(format_axis_meters))
+            self.ax.set_xlabel("Distance (m/km)", fontsize=9, color='black')
+            self.ax.set_ylabel("Distance (m/km)", fontsize=9, color='black')
+
         self.ax.grid(True, alpha=0.5)
-        
+
+        # === ОТРИСОВКА МАРШРУТОВ ===
+        for route in self.routes:
+            if len(route.points) < 2:
+                continue
+
+            coordinates = route.get_coordinates_list()
+            route_x = [c[0] for c in coordinates]
+            route_y = [c[1] for c in coordinates]
+
+            # Линия маршрута
+            self.ax.plot(route_x, route_y,
+                         color='blue', linewidth=2, linestyle='-',
+                         alpha=0.6, zorder=2)
+
+            # Точки маршрута
+            self.ax.plot(route_x, route_y,
+                         marker='o', markersize=8,
+                         color='blue', markeredgecolor='black',
+                         markeredgewidth=1.5, zorder=3)
+
+            # Номера точек
+            for point in route.points:
+                self.ax.text(point.x + 100, point.y + 100,
+                             f"P{point.point_number}",
+                             fontsize=9, fontweight='bold',
+                             color='blue',
+                             bbox=dict(boxstyle='round', facecolor='white',
+                                       alpha=0.8, edgecolor='blue'),
+                             zorder=4)
+
+            # Название маршрута
+            if route.points:
+                mid_x = np.mean(route_x)
+                mid_y = np.mean(route_y)
+                self.ax.text(mid_x, mid_y - 200,
+                             route.name,
+                             fontsize=10, fontweight='bold',
+                             color='darkblue',
+                             bbox=dict(boxstyle='round', facecolor='yellow',
+                                       alpha=0.7, edgecolor='darkblue'),
+                             zorder=4)
+
+        # === ОТРИСОВКА ПРОГНОЗИРУЕМЫХ ТРЕКОВ ===
+        for ship_name, track_data in self.predicted_tracks.items():
+            role = track_data.get('role', 'unknown')
+            pre_maneuver = track_data.get('pre_maneuver', [])
+            post_maneuver = track_data.get('post_maneuver', [])
+            maneuver_point = track_data.get('maneuver_point', None)
+
+            if role == 'give_way':
+                pre_color = '#FFA500'
+                post_color = '#00AA00'
+                point_color = '#FF0000'
+            else:
+                pre_color = '#4444FF'
+                post_color = None
+                point_color = None
+
+            if len(pre_maneuver) > 1:
+                pre_x = [p[0] for p in pre_maneuver]
+                pre_y = [p[1] for p in pre_maneuver]
+                self.ax.plot(pre_x, pre_y,
+                             color=pre_color,
+                             linewidth=2.0,
+                             linestyle='--',
+                             alpha=0.7,
+                             zorder=3)
+
+            if len(post_maneuver) > 1 and post_color:
+                post_x = [p[0] for p in post_maneuver]
+                post_y = [p[1] for p in post_maneuver]
+                self.ax.plot(post_x, post_y,
+                             color=post_color,
+                             linewidth=2.5,
+                             linestyle='-.',
+                             alpha=0.8,
+                             zorder=3)
+
+            if maneuver_point and point_color:
+                self.ax.plot(maneuver_point[0], maneuver_point[1],
+                             marker='o', markersize=10,
+                             color=point_color,
+                             markeredgecolor='black',
+                             markeredgewidth=1.5,
+                             zorder=7)
+
+                new_course = track_data.get('new_course')
+                if new_course is not None:
+                    self.ax.text(maneuver_point[0] + 100, maneuver_point[1] + 100,
+                                 f"Turn\nto {new_course:.0f}°",
+                                 fontsize=8,
+                                 color=point_color,
+                                 fontweight='bold',
+                                 bbox=dict(boxstyle='round', facecolor='white',
+                                           alpha=0.9, edgecolor=point_color),
+                                 zorder=9)
+
+        if self.predicted_tracks:
+            legend_elements = [
+                Line2D([0], [0], color='#FFA500', linewidth=2, linestyle='--',
+                       label='Pre-maneuver (give-way)'),
+                Line2D([0], [0], color='#00AA00', linewidth=2.5, linestyle='-.',
+                       label='Post-maneuver (give-way)'),
+                Line2D([0], [0], color='#4444FF', linewidth=2, linestyle='--',
+                       label='Stand-on track'),
+                Line2D([0], [0], marker='o', color='w', markerfacecolor='#FF0000',
+                       markersize=10, label='Maneuver point')
+            ]
+            self.ax.legend(handles=legend_elements, loc='upper right', fontsize=8,
+                           framealpha=0.9)
+
+        # === ОТРИСОВКА СУДОВ ===
         for ship in ships:
             track_x = []
             track_y = []
@@ -201,19 +464,19 @@ class ShipCanvas(FigureCanvas):
             if len(track_x) > 1:
                 self.ax.plot(track_x, track_y, color=ship.color,
                              alpha=0.4, linewidth=1.5, linestyle='--', zorder=2)
-            
+
             vertices = ship.get_pentagon_vertices()
             pentagon = Polygon(vertices, closed=True, facecolor='black',
                                edgecolor='black', linewidth=1.5, alpha=0.95, zorder=5)
             self.ax.add_patch(pentagon)
-            
+
             if ship.llm_controlled:
                 rect = Rectangle((ship.x - 60, ship.y - 60), 120, 120,
                                  fill=False, edgecolor='gold', linewidth=3, zorder=4)
                 self.ax.add_patch(rect)
-            
+
             self.draw_velocity_vector(ship)
-            
+
             font_size = max(7, min(10, 1000 / self.view_scale * 10))
             llm_text = ship.get_llm_status_text()
             self.ax.text(ship.x + 80, ship.y + 80,
@@ -223,5 +486,5 @@ class ShipCanvas(FigureCanvas):
                          fontsize=font_size, ha='left', va='bottom',
                          bbox=dict(boxstyle='round', facecolor='white',
                                    alpha=0.8, edgecolor='gray'))
-        
+
         self.draw()
