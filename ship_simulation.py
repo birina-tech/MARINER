@@ -20,7 +20,7 @@ from llm_worker import LLMWorker
 from collision_analyzer import launch_collision_analysis, CollisionAnalyzer
 from llm_controller import LLMCoordinator
 from llm_decisions_window import launch_llm_decisions_window
-from return_to_course import TrajectoryAutopilot
+
 
 
 class MainWindow(QMainWindow):
@@ -48,7 +48,6 @@ class MainWindow(QMainWindow):
         self.llm_pending = False
         self.move_mode = False
         self.move_ship = None
-        self.autopilot = TrajectoryAutopilot()
         self.init_menu()
         self.init_ui()
         self.timer = QTimer()
@@ -990,36 +989,21 @@ class MainWindow(QMainWindow):
                         if ego_data:
                             # Intercept RETURN_TO_COURSE
                             if ego_data['status'] == 'RETURN_TO_COURSE':
-                                # Bypass LLM and use deterministic PI/PID Autopilot
-                                rudder, rpm = self.autopilot.calculate_return_maneuver(
-                                    ship.x, ship.y, ship.base_x, ship.base_y,
-                                    ship.get_heading_deg(), ship.base_heading_deg,
-                                    ship.r, self.dt
-                                )
+                                # Collision is avoided. Steer back to original heading smoothly.
+                                heading_error = (ship.base_heading_deg - ship.get_heading_deg() + 180) % 360 - 180
                                 
-                                # Apply the mathematical command instantly
+                                # Simple proportional rudder control to turn back to course
+                                rudder = np.clip(1.5 * heading_error, -35.0, 35.0) 
+                                rpm = 50.0
+                                
                                 ship.apply_llm_command(rudder, rpm)
-                                ship.llm_reasoning = "Deterministic PI/PID return to trajectory."
-                                ship.llm_decision = {"rudder_deg": rudder, "rpm_percent": rpm, "reasoning": ship.llm_reasoning}
+                                ship.llm_reasoning = "Collision avoided. Switching to 'On course' to continue journey."
+                                ship.llm_decision = {"rudder_deg": float(rudder), "rpm_percent": float(rpm), "reasoning": ship.llm_reasoning}
                                 
-                                # Check if the maneuver is finally complete
-                                heading_diff = abs((ship.base_heading_deg - ship.get_heading_deg() + 180) % 360 - 180)
-                                if heading_diff <= 1 and ship.rudder_cmd == 0:
+                                # Check if the ship is back on its original course
+                                if abs(heading_error) <= 1.0:
+                                    ship.apply_llm_command(0.0, rpm) # Straighten rudder completely
                                     ship.in_maneuver = False
-                                    
-                            else:
-                                # Status is MUST_YIELD or HOLD_COURSE -> Send to LLM
-                                # Create and start a dedicated worker for this ship
-                                worker = LLMWorker(coordinator, ship.name, ego_data)
-                                worker.result_ready.connect(self.on_llm_result)
-                                worker.error_occurred.connect(self.on_llm_error)
-                                
-                                # Tell the thread to safely delete its C++ memory when done
-                                worker.finished.connect(worker.deleteLater)
-                                    
-                                # Store reference to prevent Python garbage collection while running
-                                self.llm_workers[ship.name] = worker
-                                worker.start()
                     
                 self.last_llm_update = self.simulation_time
                     

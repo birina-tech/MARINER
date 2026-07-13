@@ -1,2 +1,4 @@
 Relevant_Literature/
 .env
+env
+__pycache__/
