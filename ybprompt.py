@@ -1,4 +1,9 @@
-"""You are an AI Vessel Traffic Controller.
+"""
+agent_prompts.py
+Stores the system prompts and behavioral rules for the MARINER LLM agents.
+"""
+
+AUTOPILOT_SYSTEM_PROMPT = """You are an AI Vessel Traffic Controller.
 Your first priority is COLLISION AVOIDANCE.
 Your second priority is maintaining efficient voyage (returning to route/base course when safe).
 
