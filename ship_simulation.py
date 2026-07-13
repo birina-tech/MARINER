@@ -24,6 +24,8 @@ from safe_passing_dialog import launch_safe_passing_calculator
 from units import format_speed, format_distance
 from route import Route, RoutePoint
 from route_dialog import RouteDialog
+from chart_manager import ChartManager
+from PyQt5.QtWidgets import QFileDialog
 
 
 class MainWindow(QMainWindow):
@@ -66,6 +68,35 @@ class MainWindow(QMainWindow):
         self.init_ui()
         self.timer = QTimer()
         self.timer.timeout.connect(self.simulation_step)
+        self.chart_manager = ChartManager()
+
+    def load_s57_chart(self):
+        """Открывает диалог выбора и загружает S-57 карту"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, 
+            "Select S-57 Chart", 
+            "", 
+            "S-57 Files (*.000 *.s57 *.S57);;All Files (*)"
+        )
+        
+        if file_path:
+            self.statusBar().showMessage(f"Loading chart: {file_path}...")
+            QApplication.processEvents() # Чтобы интерфейс не зависал
+            
+            success = self.chart_manager.load_s57(file_path)
+            
+            if success:
+                self.statusBar().showMessage("Chart loaded successfully!")
+                # Обновляем canvas, чтобы отобразить карту
+                self.canvas.update_plot(
+                    self.ships, self.running, self.simulation_time,
+                    use_miles=self.use_miles, use_knots=self.use_knots,
+                    predicted_tracks=self.predicted_tracks,
+                    routes=self.routes,
+                    chart_data=self.chart_manager.get_draw_data() # <-- ПЕРЕДАЕМ ДАННЫЕ КАРТЫ
+                )
+            else:
+                QMessageBox.critical(self, "Chart Error", "Failed to load the S-57 chart. Check console for details.")
 
     def set_predicted_tracks(self, tracks_dict):
         """Установить прогнозируемые треки для отображения"""
@@ -134,7 +165,11 @@ class MainWindow(QMainWindow):
         self.action_save_task.triggered.connect(self.save_task)
         self.action_load_task = tasks_menu.addAction(" Load Task")
         self.action_load_task.triggered.connect(self.load_task)
-
+        
+        chart_menu = menu_bar.addMenu("🗺 Chart")
+        self.action_load_chart = chart_menu.addAction("Load S-57 Chart (.000 / .s57)")
+        self.action_load_chart.triggered.connect(self.load_s57_chart)
+        
         help_menu = menu_bar.addMenu("Help")
         self.action_help = help_menu.addAction("📖 User guide")
         self.action_help.triggered.connect(self.show_help)
@@ -143,6 +178,8 @@ class MainWindow(QMainWindow):
         help_menu.addSeparator()
         self.action_about = help_menu.addAction("ℹ️ About")
         self.action_about.triggered.connect(self.show_about)
+
+
 
     def open_rules_settings(self):
         """Открыть диалог настроек правил МППСС"""

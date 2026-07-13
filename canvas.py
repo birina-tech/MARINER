@@ -284,7 +284,7 @@ class ShipCanvas(FigureCanvas):
 
     def update_plot(self, ships, running, simulation_time,
                     use_miles=None, use_knots=None,
-                    predicted_tracks=None, routes=None):
+                    predicted_tracks=None, routes=None, chart_data=None):
         """
         Обновить график.
         """
@@ -451,7 +451,59 @@ class ShipCanvas(FigureCanvas):
             ]
             self.ax.legend(handles=legend_elements, loc='upper right', fontsize=8,
                            framealpha=0.9)
-
+        
+        # === ОТРИСОВКА НАВИГАЦИОННОЙ КАРТЫ (S-57) ===
+        if chart_data and chart_data.get('is_loaded'):
+            # 1. Участки суши (серые полигоны)
+            for polygon_rings in chart_data['land_polygons']:
+                for ring in polygon_rings:
+                    if len(ring) > 2:
+                        xs = [p[0] for p in ring]
+                        ys = [p[1] for p in ring]
+                        self.ax.fill(xs, ys, color='saddlebrown', 
+                                    edgecolor='black', linewidth=0.5, 
+                                    alpha=0.4, zorder=1)
+            
+            # 2. Изобаты (линии равных глубин) — синим цветом
+            for contour in chart_data.get('depth_contours', []):
+                points = contour['points']
+                depth = contour['depth']
+                if len(points) > 1:
+                    xs = [p[0] for p in points]
+                    ys = [p[1] for p in points]
+                    # Мелководье — красным, глубже — синим
+                    if depth < 10:
+                        color = '#FF4444'
+                        lw = 1.5
+                    elif depth < 20:
+                        color = '#FF8800'
+                        lw = 1.2
+                    else:
+                        color = '#4488FF'
+                        lw = 0.8
+                    self.ax.plot(xs, ys, color=color, linewidth=lw, 
+                                alpha=0.7, zorder=1)
+                    # Подпись глубины на изобате (только для крупных)
+                    if len(points) > 5 and self.view_scale < 3000:
+                        mid_idx = len(points) // 2
+                        self.ax.text(points[mid_idx][0], points[mid_idx][1],
+                                    f"{depth:.0f}m", fontsize=7, color=color,
+                                    fontweight='bold', ha='center', va='center',
+                                    bbox=dict(boxstyle='round,pad=0.2', 
+                                            facecolor='white', alpha=0.7),
+                                    zorder=2)
+            
+            # 3. Препятствия (красные крестики)
+            for obs in chart_data.get('obstacles', []):
+                self.ax.plot(obs['x'], obs['y'], marker='x', 
+                            color='red', markersize=10, 
+                            markeredgewidth=2, zorder=3)
+                if obs.get('depth') is not None and self.view_scale < 2000:
+                    self.ax.text(obs['x'] + 50, obs['y'] + 50,
+                                f"⚠{obs['depth']:.0f}m", 
+                                fontsize=7, color='red', fontweight='bold',
+                                zorder=3)
+                
         # === ОТРИСОВКА СУДОВ ===
         for ship in ships:
             track_x = []
