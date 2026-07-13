@@ -1,7 +1,7 @@
 """
 llm_controller.py
 Универсальный LLM-координатор с поддержкой локальных и онлайн моделей.
-Исправлена обработка ошибок и добавлена поддержка авторулевого.
+ИСПРАВЛЕНО: обработка ошибок и поддержка авторулевого.
 """
 import requests
 import json
@@ -76,7 +76,7 @@ class LLMCoordinator:
         else:
             self.api_key = None
 
-        self.system_prompt = """You are an AI Vessel Traffic Controller coordinating multiple ships.
+        self.system_prompt = """You are an AI Vessel Traffic Controller.
 Your first priority is COLLISION AVOIDANCE.
 Your second priority is maintaining efficient voyage (returning to route/base course when safe).
 
@@ -85,33 +85,35 @@ You ONLY output rudder/RPM for manual ships, or course_deg/resume_route for auto
 
 === INPUT FORMAT (JSON) ===
 {
-  "ships": [
-    {
-      "name": "Ship_1",
-      "current_heading_deg": 45,
-      "base_heading_deg": 45,
-      "heading_diff_deg": 15,
-      "speed_ms": 5.0,
-      "current_rudder": 0,
-      "current_rpm": 50,
-      "status": "MUST_YIELD" | "HOLD_COURSE" | "RETURN_TO_COURSE",
-      "no_left_turn": true | false,
-      "in_maneuver": true | false,
-      "autopilot_enabled": true | false,
-      "autopilot_mode": "ROUTE" | "HOLD" | null,
-      "assigned_route": "Route_1" | null,
-      "pairs": [
-        {
-          "other_ship": "Ship_2",
-          "rule": "14" | "15" | "13" | "17.2",
-          "role": "GIVE_WAY" | "STAND_ON" | "BOTH_ALTER",
-          "cpa_m": 500,
-          "tcpa_s": 120,
-          "crosses_ahead": "Ship_2 crosses Ship_1 ahead" | null
-        }
-      ]
-    }
-  ]
+ "ships": [
+{
+ "name": "Ship_1",
+ "current_heading_deg": 45,
+ "base_heading_deg": 45,
+ "heading_diff_deg": 15,
+ "speed_ms": 5.0,
+ "current_rudder": 0,
+ "current_rpm": 50,
+ "status": "MUST_YIELD" | "HOLD_COURSE" | "RETURN_TO_COURSE",
+ "no_left_turn": true | false,
+ "in_maneuver": true | false,
+ "maneuver_course_deg": 90 | null,
+ "maneuver_target_course": 90 | null,
+ "autopilot_enabled": true | false,
+ "autopilot_mode": "ROUTE" | "HOLD" | null,
+ "assigned_route": "Route_1" | null,
+ "pairs": [
+{
+ "other_ship": "Ship_2",
+ "rule": "14" | "15" | "13" | "17.2",
+ "role": "GIVE_WAY" | "STAND_ON" | "BOTH_ALTER",
+ "cpa_m": 500,
+ "tcpa_s": 120,
+ "crosses_ahead": "Ship_2 crosses Ship_1 ahead" | null
+}
+]
+}
+]
 }
 
 === OUTPUT FORMAT (strict JSON only) ===
@@ -132,6 +134,19 @@ You ONLY output rudder/RPM for manual ships, or course_deg/resume_route for auto
     }
   }
 }
+=== MANEUVER CONTROL RULE (CRITICAL) ===
+When a ship has in_maneuver == true:
+- The ship is currently executing a collision avoidance maneuver
+- DO NOT issue "resume_route" until the ship has reached the maneuver course
+- Continue issuing the SAME course_deg until heading_diff_deg <= 5°
+- You may ADJUST the course_deg if CPA/TCPA worsens, but DO NOT cancel the maneuver
+- Only when heading_diff_deg <= 5° AND CPA > 1500m AND TCPA > 300s you may issue resume_route
+- This prevents dangerous oscillation between maneuver and return-to-course
+
+When a ship has in_maneuver == false:
+- Analyze CPA/TCPA normally according to COLREGs
+- If collision risk exists, issue course_deg to avoid it (this will set in_maneuver=true)
+- If safe, you may issue resume_route or maintain current course
 
 === RULES FOR AUTOPILOT SHIPS (autopilot_enabled == true) ===
 These ships follow a route automatically. You control them via HIGH-LEVEL commands:
@@ -373,15 +388,10 @@ Respond with valid JSON only. No markdown, no explanation outside JSON."""
             }
 
     def apply_commands(self, ships, commands):
-        """
-        Применить команды от LLM к судам.
-        Поддерживает авторулевой (autopilot) для судов, следующих по маршруту.
-        """
         if not commands:
             print("No commands received from LLM")
             return
 
-        # Определяем формат команд
         vessel_commands = None
         if isinstance(commands, dict):
             if "vessel_commands" in commands:
@@ -407,12 +417,10 @@ Respond with valid JSON only. No markdown, no explanation outside JSON."""
             cmd = vessel_commands[ship.name]
             reasoning = cmd.get("reasoning", "No reasoning provided")
 
-            # === ОБРАБОТКА ДЛЯ СУДОВ С АВТОРУЛЕВЫМ ===
             autopilot_enabled = getattr(ship, 'autopilot_enabled', False)
             autopilot = getattr(ship, 'autopilot', None)
 
             if autopilot_enabled and autopilot is not None:
-                # Приоритет: resume_route
                 if cmd.get('resume_route', False):
                     autopilot.resume_route()
                     ship.llm_decision = cmd
@@ -420,7 +428,6 @@ Respond with valid JSON only. No markdown, no explanation outside JSON."""
                     print(f"[LLM→AP] {ship.name}: RESUME ROUTE — {reasoning[:60]}")
                     continue
 
-                # Команда удержания курса
                 if 'course_deg' in cmd and cmd['course_deg'] is not None:
                     course = cmd['course_deg']
                     if course < 0:
@@ -434,7 +441,6 @@ Respond with valid JSON only. No markdown, no explanation outside JSON."""
                         print(f"[LLM→AP] {ship.name}: HOLD COURSE {course:.1f}° — {reasoning[:60]}")
                     continue
 
-                # Fallback: если LLM выдал rudder_deg для autopilot ship
                 if 'rudder_deg' in cmd:
                     current_heading = ship.get_heading_deg()
                     autopilot.set_hold_course(current_heading)
@@ -444,12 +450,10 @@ Respond with valid JSON only. No markdown, no explanation outside JSON."""
                     print(f"[LLM→AP] {ship.name}: direct rudder {cmd['rudder_deg']}° (fallback)")
                     continue
 
-                # Нераспознанная команда — resume
                 autopilot.resume_route()
                 print(f"[LLM→AP] {ship.name}: unrecognized command, resuming route")
                 continue
 
-            # === ОБРАБОТКА ДЛЯ ОБЫЧНЫХ СУДОВ (без авторулевого) ===
             rudder = cmd.get("rudder_deg", 0)
             rpm = cmd.get("rpm_percent", 50)
 
@@ -460,7 +464,6 @@ Respond with valid JSON only. No markdown, no explanation outside JSON."""
             ship.llm_decision = cmd
             ship.llm_reasoning = reasoning
 
-            # Если LLM выдал курс для судна без авторулевого
             if 'course_deg' in cmd and cmd['course_deg'] is not None:
                 new_course = cmd['course_deg'] % 360
                 ship.set_base_heading(new_course)

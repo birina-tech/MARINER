@@ -134,7 +134,6 @@ class RouteDialog(QDialog):
             self.table.scrollToBottom()
 
     def assign_ship(self):
-        """Назначить судно на маршрут"""
         ship = self.ship_combo.currentData()
         self.route.assigned_ship = ship
         
@@ -143,15 +142,12 @@ class RouteDialog(QDialog):
             ship.assigned_route = self.route
             ship.autopilot = RouteAutopilot(ship, self.route)
             ship.autopilot_enabled = True
-            # Включаем LLM для координации с авторулевым
-            ship.llm_controlled = True
             print(f"Autopilot + LLM enabled for {ship.name}")
         else:
             if self.route.assigned_ship:
                 self.route.assigned_ship.autopilot_enabled = False
                 self.route.assigned_ship.autopilot = None
                 self.route.assigned_ship.assigned_route = None
-                # LLM остаётся включённым, если был включён вручную
         
         self.update_table()
         
@@ -159,8 +155,7 @@ class RouteDialog(QDialog):
             QMessageBox.information(
                 self, "Vessel Assigned",
                 f"Vessel {ship.name} assigned to route {self.route.name}\n"
-                f"Autopilot ENABLED\n"
-                f"LLM coordination ENABLED"
+                f"Autopilot ENABLED (LOS guidance)"
             )
         else:
             QMessageBox.information(

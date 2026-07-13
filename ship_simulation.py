@@ -6,7 +6,7 @@ from datetime import datetime
 import numpy as np
 import warnings
 from autopilot import RouteAutopilot
-
+from autopilot_debug_dialog import AutopilotDebugDialog
 warnings.filterwarnings("ignore")
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QPushButton, QLabel, QStatusBar,
@@ -22,7 +22,7 @@ from llm_controller import LLMCoordinator
 from llm_decisions_window import launch_llm_decisions_window
 from safe_passing_dialog import launch_safe_passing_calculator
 from units import format_speed, format_distance
-from route import Route
+from route import Route, RoutePoint
 from route_dialog import RouteDialog
 
 
@@ -57,7 +57,7 @@ class MainWindow(QMainWindow):
         self.route_mode = False
         self.editing_route = None
         self.route_dialog = None
-
+        self.autopilot_debug_dialog = None
         # Единицы измерения
         self.use_miles = True
         self.use_knots = True
@@ -391,8 +391,8 @@ class MainWindow(QMainWindow):
         msg.exec_()
 
     def save_task(self):
-        if len(self.ships) == 0:
-            QMessageBox.warning(self, "No vessels", "No vessels to save.")
+        if len(self.ships) == 0 and len(self.routes) == 0:
+            QMessageBox.warning(self, "Nothing to save", "No vessels or routes to save.")
             return
         filename, ok = QInputDialog.getText(
             self, "Save Task", "Enter task filename (without extension):")
@@ -403,7 +403,26 @@ class MainWindow(QMainWindow):
             filename += '.json'
         os.makedirs(self.tasks_dir, exist_ok=True)
         filepath = os.path.join(self.tasks_dir, filename)
-        task_data = {'vessels': []}
+        
+        task_data = {'vessels': [], 'routes': []}
+        
+        # === СОХРАНЕНИЕ МАРШРУТОВ ===
+        for route in self.routes:
+            route_data = {
+                'name': route.name,
+                'points': [],
+                'assigned_ship': route.assigned_ship.name if route.assigned_ship else None,
+            }
+            for point in route.points:
+                point_data = {
+                    'x': point.x,
+                    'y': point.y,
+                    'point_number': point.point_number,
+                }
+                route_data['points'].append(point_data)
+            task_data['routes'].append(route_data)
+        
+        # === СОХРАНЕНИЕ СУДОВ ===
         for ship in self.ships:
             vessel_data = {
                 'name': ship.name,
@@ -412,16 +431,23 @@ class MainWindow(QMainWindow):
                 'course_deg': ship.get_heading_deg(),
                 'speed_ms': ship.u,
                 'rudder_deg': ship.rudder_cmd,
-                'rpm_percent': ship.rpm_cmd
+                'rpm_percent': ship.rpm_cmd,
+                'llm_controlled': ship.llm_controlled,
+                'assigned_route': ship.assigned_route.name if ship.assigned_route else None,
             }
             task_data['vessels'].append(vessel_data)
+        
         try:
             with open(filepath, 'w', encoding='utf-8') as f:
                 json.dump(task_data, f, indent=2, ensure_ascii=False)
             self.statusBar().showMessage(f"Task saved: {filepath}")
-            QMessageBox.information(self, "Task Saved", f"Task saved successfully:\n{filepath}")
+            QMessageBox.information(
+                self, "Task Saved", 
+                f"Task saved successfully:\n{filepath}\n\n"
+                f"Vessels: {len(self.ships)}\nRoutes: {len(self.routes)}")
         except Exception as e:
             QMessageBox.critical(self, "Save Error", f"Failed to save task:\n{e}")
+
 
     def load_task(self):
         if not os.path.exists(self.tasks_dir):
@@ -440,9 +466,29 @@ class MainWindow(QMainWindow):
         if self.running:
             self.stop_simulation()
         self.clear_ships()
+        
         try:
             with open(filepath, 'r', encoding='utf-8') as f:
                 task_data = json.load(f)
+            
+            # === ЗАГРУЗКА МАРШРУТОВ ===
+            route_objects = {}
+            for route_data in task_data.get('routes', []):
+                route = Route()
+                route.name = route_data['name']
+                for point_data in route_data['points']:
+                    point = RoutePoint(
+                        point_data['x'], 
+                        point_data['y'], 
+                        point_data['point_number']
+                    )
+                    route.points.append(point)
+                # Пересчитать расстояния и курсы между точками
+                route._recalculate()
+                self.routes.append(route)
+                route_objects[route.name] = route
+            
+            # === ЗАГРУЗКА СУДОВ ===
             for vessel_data in task_data.get('vessels', []):
                 ship = Ship(
                     x=vessel_data['x'],
@@ -454,11 +500,24 @@ class MainWindow(QMainWindow):
                 ship.rudder_cmd = vessel_data.get('rudder_deg', 0.0)
                 ship.rpm_cmd = vessel_data.get('rpm_percent', 50.0)
                 ship.set_base_heading(vessel_data['course_deg'])
+                ship.llm_controlled = vessel_data.get('llm_controlled', False)
+                
+                # === ВОССТАНОВЛЕНИЕ СВЯЗИ СУДНО-МАРШРУТ ===
+                assigned_route_name = vessel_data.get('assigned_route')
+                if assigned_route_name and assigned_route_name in route_objects:
+                    route = route_objects[assigned_route_name]
+                    ship.assigned_route = route
+                    ship.autopilot_enabled = True
+                    ship.autopilot = RouteAutopilot(ship, route)
+                    route.assigned_ship = ship
+                
                 self.ships.append(ship)
+            
             self.statusBar().showMessage(f"Task loaded: {filepath}")
             QMessageBox.information(
                 self, "Task Loaded",
-                f"Task loaded successfully:\n{filepath}\n\nVessels: {len(self.ships)}")
+                f"Task loaded successfully:\n{filepath}\n\n"
+                f"Vessels: {len(self.ships)}\nRoutes: {len(self.routes)}")
             self.canvas.update_plot(
                 self.ships, self.running, self.simulation_time,
                 use_miles=self.use_miles, use_knots=self.use_knots,
@@ -467,6 +526,8 @@ class MainWindow(QMainWindow):
             )
         except Exception as e:
             QMessageBox.critical(self, "Load Error", f"Failed to load task:\n{e}")
+            import traceback
+            traceback.print_exc()
 
     def init_ui(self):
         central_widget = QWidget()
@@ -884,7 +945,27 @@ class MainWindow(QMainWindow):
         action_options = QAction("⚙️ Options", self)
         action_options.triggered.connect(lambda: self.open_ship_options(ship))
         menu.addAction(action_options)
+        # === НОВЫЙ ПУНКТ: Autopilot Debug ===
+        action_autopilot = QAction("🤖 Autopilot", self)
+        action_autopilot.triggered.connect(lambda: self.open_autopilot_debug(ship))
+        menu.addAction(action_autopilot)
+
         menu.exec_(QCursor.pos())
+
+    def open_autopilot_debug(self, ship):
+        """Открыть окно отладки авторулевого"""
+        # Если диалог уже открыт для этого судна — просто показать
+        if (self.autopilot_debug_dialog is not None and 
+                self.autopilot_debug_dialog.ship == ship and
+                self.autopilot_debug_dialog.isVisible()):
+            self.autopilot_debug_dialog.show()
+            self.autopilot_debug_dialog.raise_()
+            self.autopilot_debug_dialog.activateWindow()
+            return
+        
+        # Создать новый диалог
+        self.autopilot_debug_dialog = AutopilotDebugDialog(ship, self)
+        self.autopilot_debug_dialog.show()
 
     def start_move_ship(self, ship):
         self.move_mode = True
@@ -1008,7 +1089,8 @@ class MainWindow(QMainWindow):
     def open_collision_analysis(self):
         """Открыть окно анализа столкновений"""
         if self.analysis_window is None:
-            self.analysis_window = launch_collision_analysis(self.ships, self)
+            # ВАЖНО: передаем callable, чтобы окно видело актуальный список судов
+            self.analysis_window = launch_collision_analysis(lambda: self.ships, self)
         else:
             self.analysis_window.show()
             self.analysis_window.raise_()
@@ -1122,134 +1204,110 @@ class MainWindow(QMainWindow):
         )
 
     def collect_collision_data(self):
-        """
-        Собрать данные для LLM в формате {'ships': [...]}.
-        Код определяет правила и статусы, LLM только выдаёт руль/RPM.
-        """
         from colreg_rules import determine_colreg_situation
         from collision_analyzer import CollisionAnalyzer
         analyzer = CollisionAnalyzer()
         ship_data_list = []
+        
         for ship in self.ships:
             pairs_info = []
             must_yield = False
-            no_left_turn = False
-            all_passed = True
             for other in self.ships:
-                if other is ship:
-                    continue
-                cpa_data = analyzer.calculate_cpa_tcpa(ship, other)
-                colreg = determine_colreg_situation(
-                    ship, other,
-                    cpa_data['dist'], cpa_data['DCPA'], cpa_data['TCPA']
-                )
+                if other is ship: continue
+                cpa = analyzer.calculate_cpa_tcpa(ship, other)
+                colreg = determine_colreg_situation(ship, other, cpa['dist'], cpa['DCPA'], cpa['TCPA'])
                 action = colreg['ship1_action']
-                if 'Give-way' in action or 'Alter' in action or 'Change' in action:
-                    role = 'GIVE_WAY'
-                    must_yield = True
-                elif 'Stand on' in action:
-                    role = 'STAND_ON'
-                else:
-                    role = 'BOTH_ALTER'
-                    must_yield = True
-                crossing = analyzer.calculate_course_crossing(ship, other)
-                crosses_ahead = None
-                if crossing['crossing_type']:
-                    if crossing['crosses_1_by_2']:
-                        crosses_ahead = f"{other.name} crosses {ship.name} ahead"
-                    elif crossing['crosses_2_by_1']:
-                        crosses_ahead = f"{ship.name} crosses {other.name} ahead"
-                if role == 'GIVE_WAY' and crosses_ahead and f"{other.name} crosses" in crosses_ahead:
-                    no_left_turn = True
-                tcpa_val = cpa_data['TCPA']
-                if np.isinf(tcpa_val) or tcpa_val > 0:
-                    all_passed = False
+                if 'Give-way' in action or 'Alter' in action: must_yield = True
+                
                 pairs_info.append({
                     'other_ship': other.name,
                     'rule': colreg['rule'],
-                    'role': role,
-                    'cpa_m': float(cpa_data['DCPA']),
-                    'tcpa_s': float(tcpa_val) if not np.isinf(tcpa_val) else 99999.0,
-                    'crosses_ahead': crosses_ahead
+                    'cpa_m': float(cpa['DCPA']),
+                    'tcpa_s': float(cpa['TCPA']) if cpa['TCPA'] != float('inf') else 99999.0
                 })
-            current_heading = ship.get_heading_deg()
-            heading_diff = abs((ship.base_heading_deg - current_heading + 180) % 360 - 180)
-            returning = all_passed and heading_diff > 2 and ship.in_maneuver
-            if returning:
-                status = 'RETURN_TO_COURSE'
-            elif must_yield:
-                status = 'MUST_YIELD'
-            else:
-                status = 'HOLD_COURSE'
+                
+            status = 'MUST_YIELD' if must_yield else 'HOLD_COURSE'
+            
+            # Статус авторулевого и дистанция до маршрута
+            ap_enabled = getattr(ship, 'autopilot_enabled', False)
+            dist_to_route = None
+            if ap_enabled and getattr(ship, 'assigned_route', None):
+                pts = ship.assigned_route.points
+                if len(pts) >= 2:
+                    sx, sy = np.array([ship.x, ship.y])
+                    min_d = float('inf')
+                    for i in range(len(pts)-1):
+                        p1 = np.array([pts[i].x, pts[i].y])
+                        p2 = np.array([pts[i+1].x, pts[i+1].y])
+                        v = p2-p1; sl = np.dot(v,v)
+                        if sl > 0:
+                            t = np.clip(np.dot(sx-p1, v)/sl, 0, 1)
+                            min_d = min(min_d, np.linalg.norm(sx - (p1+t*v)))
+                    dist_to_route = min_d
+
             ship_data_list.append({
                 'name': ship.name,
-                'current_heading_deg': float(current_heading),
+                'current_heading_deg': float(ship.get_heading_deg()),
                 'base_heading_deg': float(ship.base_heading_deg),
-                'heading_diff_deg': float(heading_diff),
                 'speed_ms': float(ship.u),
                 'current_rudder': float(ship.rudder_cmd),
                 'current_rpm': float(ship.rpm_cmd),
                 'status': status,
-                'no_left_turn': no_left_turn,
-                'in_maneuver': ship.in_maneuver,
+                'autopilot_enabled': ap_enabled,
+                'distance_to_route_m': dist_to_route,
                 'pairs': pairs_info,
-                # НОВЫЕ ПОЛЯ ДЛЯ АВТОРУЛЕВОГО
-                'autopilot_enabled': getattr(ship, 'autopilot_enabled', False),
-                'autopilot_mode': ship.autopilot.mode if getattr(ship, 'autopilot', None) else None,
-                'assigned_route': ship.assigned_route.name if getattr(ship, 'assigned_route', None) else None,
+                # === НОВЫЕ ПОЛЯ ДЛЯ КОНТРОЛЯ МАНЕВРА ===
+                'in_maneuver': ship.in_maneuver,
+                'maneuver_course_deg': ship.maneuver_course_deg,
+                'maneuver_target_course': ship.maneuver_target_course,
             })
         return {'ships': ship_data_list}
 
     def on_llm_result(self, commands):
-        """Обработка команд от LLM с учётом авторулевого"""
+        """Обработка команд от LLM с отслеживанием маневра"""
         self.llm_pending = False
         
-        # commands — dict {ship_name: {rudder, rpm, course_deg, resume_route, ...}}
-        # Формат зависит от промпта LLM
+        if self.llm_coordinator:
+            self.llm_coordinator.apply_commands(self.ships, commands)
         
+        # Обработка маневров для всех LLM-судов
         for ship in self.ships:
-            if ship.name not in commands:
+            if not ship.llm_controlled:
                 continue
             
-            cmd = commands[ship.name]
+            # Определяем, находится ли судно в режиме авторулевого HOLD
+            autopilot = getattr(ship, 'autopilot', None)
+            autopilot_enabled = getattr(ship, 'autopilot_enabled', False)
             
-            # Если судно под авторулевым — обрабатываем specially
-            if ship.autopilot_enabled and ship.autopilot:
-                # Команда возврата к маршруту
-                if cmd.get('resume_route', False):
-                    ship.autopilot.resume_route()
-                    continue
+            if autopilot_enabled and autopilot and autopilot.mode == 1:  # MODE_HOLD_COURSE
+                # Судно в режиме удержания курса от LLM
+                current_heading = ship.get_heading_deg()
+                target_course = autopilot.hold_course_rad
                 
-                # Если LLM выдал курс — передаём авторулевому
-                if 'course_deg' in cmd and cmd['course_deg'] is not None:
-                    course = cmd['course_deg']
-                    # Специальное значение -1 = resume
-                    if course < 0:
-                        ship.autopilot.resume_route()
+                if target_course is not None:
+                    target_deg = np.degrees(target_course)
+                    heading_diff = abs((current_heading - target_deg + 180) % 360 - 180)
+                    
+                    # Если судно вышло на заданный курс (±5°)
+                    if heading_diff <= 5.0:
+                        # Маневр завершен
+                        if ship.in_maneuver:
+                            ship.in_maneuver = False
+                            ship.maneuver_course_deg = None
+                            ship.maneuver_target_course = None
+                            print(f"[Maneuver] {ship.name}: COMPLETED - reached target course {target_deg:.1f}°")
                     else:
-                        ship.autopilot.set_hold_course(course)
-                    continue
-                
-                # Если LLM выдал только руль — применяем напрямую
-                # (авторулевой уже в режиме HOLD_COURSE с текущим курсом)
-                if 'rudder' in cmd:
-                    if ship.autopilot.mode != RouteAutopilot.MODE_HOLD_COURSE:
-                        ship.autopilot.set_hold_course(ship.get_heading_deg())
-                    ship.rudder_cmd = cmd['rudder']
-                continue
-            
-            # Обычное применение для судов без авторулевого
-            if self.llm_coordinator:
-                self.llm_coordinator.apply_commands([ship], {ship.name: cmd})
-        
-        # Обновление статуса манёвра для судов без авторулевого
-        for ship in self.ships:
-            if not ship.autopilot_enabled and ship.llm_controlled:
-                heading_diff = abs(
-                    (ship.base_heading_deg - ship.get_heading_deg() + 180) % 360 - 180
-                )
-                if heading_diff < 2 and ship.rudder_cmd == 0:
+                        # Судно еще не вышло на курс
+                        if not ship.in_maneuver:
+                            ship.in_maneuver = True
+                            ship.maneuver_target_course = target_deg
+                            print(f"[Maneuver] {ship.name}: STARTED - target {target_deg:.1f}°, current {current_heading:.1f}°")
+            else:
+                # Судно не в режиме HOLD - маневр не активен
+                if ship.in_maneuver:
                     ship.in_maneuver = False
+                    ship.maneuver_course_deg = None
+                    ship.maneuver_target_course = None
 
     def on_llm_error(self, error_msg):
         self.llm_pending = False
@@ -1268,54 +1326,26 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"LLM query sent at t={self.simulation_time:.1f}s (async)")
 
     def simulation_step(self):
-        """Шаг симуляции с интеграцией LLM и авторулевого"""
         if self.running:
-            # === 1. LLM для всех судов с llm_controlled (включая суда с авторулевым) ===
-            # Авторулевые суда тоже должны быть в списке, чтобы LLM мог выдавать 
-            # команды course_deg и resume_route
+            # Запрос LLM
             llm_ships = [s for s in self.ships if s.llm_controlled]
-            
-            if (llm_ships and 
-                    (self.simulation_time - self.last_llm_update >= self.llm_update_interval) and
-                    not self.llm_pending):
-                collision_data = self.collect_collision_data()
-                if collision_data:
-                    self.start_llm_worker(collision_data)
+            if llm_ships and (self.simulation_time - self.last_llm_update >= self.llm_update_interval) and not self.llm_pending:
+                self.start_llm_worker(self.collect_collision_data())
                 self.last_llm_update = self.simulation_time
-            
-            # === 2. Обновление физики судов ===
+
+            # Физика и авторулевой
             for ship in self.ships:
-                # Приоритет авторулевого над LLM
                 if getattr(ship, 'autopilot_enabled', False) and ship.autopilot:
-                    # Авторулевой управляет рулём напрямую
-                    # (в режиме ROUTE или HOLD_COURSE)
                     ship.autopilot.update(self.dt)
                 else:
-                    # Обычная логика для судов без авторулевого
-                    heading_diff = abs(
-                        (ship.base_heading_deg - ship.get_heading_deg() + 180) % 360 - 180
-                    )
-                    if heading_diff > 2:
-                        ship.in_maneuver = True
-                
-                # Обновление физики судна (модель Номото)
+                    hd = abs((ship.base_heading_deg - ship.get_heading_deg() + 180) % 360 - 180)
+                    if hd > 2: ship.in_maneuver = True
                 ship.update(self.dt)
-                
-                # Логирование состояния
                 self.log_ship_state(ship)
-            
-            # === 3. Обновление времени и отрисовка ===
+                
             self.simulation_time += self.dt
-            
-            self.canvas.update_plot(
-                self.ships, 
-                self.running, 
-                self.simulation_time,
-                use_miles=self.use_miles, 
-                use_knots=self.use_knots,
-                predicted_tracks=self.predicted_tracks,
-                routes=self.routes
-            )
+            self.canvas.update_plot(self.ships, self.running, self.simulation_time, 
+                                    self.use_miles, self.use_knots, self.predicted_tracks, self.routes)
 
 
 if __name__ == "__main__":

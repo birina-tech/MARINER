@@ -1,385 +1,442 @@
 """
 autopilot.py
-Каскадный ПИД-регулятор для следования по маршруту.
+Авторулевой безэкипажного судна на основе работы Бурылина Я.В., Попова А.Н.
 
-Структура управления (сверху вниз):
-  1. Дистанция до траектории (cross-track error) → поправка к курсу
-  2. Ошибка курса → желаемая угловая скорость (yaw rate)
-  3. Ошибка угловой скорости → перекладка руля
-
-Режимы работы:
-  - MODE_ROUTE: следование по маршруту (выход на траекторию + проход по точкам)
-  - MODE_HOLD_COURSE: удержание заданного курса (команда от LLM)
+Формула (1): расстояние начала манёвра зависит от угла поворота (таблица)
+Формула (2): переключение на следующее плечо когда d2 < turn_dist(угол) или d2 < d1
+Формула (3): иерархический ПИД (по курсу) + П (по отклонению) регулятор
 """
 import numpy as np
 
 
-class PIDController:
-    """
-    ПИД-регулятор с ограничением выхода и anti-windup.
-    """
-
-    def __init__(self, kp, ki, kd, output_min, output_max):
-        self.kp = kp
-        self.ki = ki
-        self.kd = kd
-        self.output_min = output_min
-        self.output_max = output_max
-        self.integral = 0.0
-        self.prev_error = 0.0
-        self.first_run = True
-
-    def reset(self):
-        """Сброс интегратора и предыдущей ошибки."""
-        self.integral = 0.0
-        self.prev_error = 0.0
-        self.first_run = True
-
-    def update(self, error, dt):
-        """
-        Рассчитать выход ПИД-регулятора.
-
-        Args:
-            error: текущая ошибка
-            dt: шаг времени (секунды)
-
-        Returns:
-            ограниченное значение управления
-        """
-        if dt <= 0:
-            return 0.0
-
-        if self.first_run:
-            self.prev_error = error
-            self.first_run = False
-
-        # Пропорциональная составляющая
-        p_term = self.kp * error
-
-        # Интегральная составляющая с anti-windup
-        self.integral += error * dt
-        if self.ki != 0:
-            max_integral = (self.output_max - p_term) / self.ki
-            min_integral = (self.output_min - p_term) / self.ki
-            self.integral = np.clip(self.integral, min_integral, max_integral)
-        i_term = self.ki * self.integral
-
-        # Дифференциальная составляющая
-        derivative = (error - self.prev_error) / dt
-        d_term = self.kd * derivative
-
-        self.prev_error = error
-
-        output = p_term + i_term + d_term
-        return np.clip(output, self.output_min, self.output_max)
-
-
 class RouteAutopilot:
     """
-    Авторулевой для следования по маршруту.
-
-    Поддерживает два режима:
-    - MODE_ROUTE: судно следует по точкам маршрута, плавно выходит на траекторию
-    - MODE_HOLD_COURSE: судно удерживает курс, заданный LLM
-
-    Переключение между режимами:
-    - set_hold_course(course_deg) — перейти в режим удержания курса
-    - resume_route() — вернуться к следованию по маршруту
+    Авторулевой на основе работы Бурылина Я.В., Попова А.Н.
+    
+    Закон управления (формула 3):
+    δ = a_pr*(K - Kp) + a_in*(K-Kp)dt + a_d*d(K-Kp)/dt + b_pr*χ
+    
+    где:
+    - K, Kp - курсы исполняемый и заданный (в градусах)
+    - χ - отклонение от траектории (cross-track error в метрах)
+    - b_pr*χ - поправка к заданному курсу (в градусах)
+    - a_pr, a_in, a_d, b_pr - коэффициенты
     """
-
-    # Режимы работы
-    MODE_ROUTE = 0        # Следование по маршруту
-    MODE_HOLD_COURSE = 1  # Удержание курса от LLM
-
+    
+    MODE_ROUTE = 0
+    MODE_HOLD_COURSE = 1
+    
     def __init__(self, ship, route):
-        """
-        Инициализация авторулевого.
-
-        Args:
-            ship: объект Ship
-            route: объект Route
-        """
         self.ship = ship
         self.route = route
-
-        # Длина судна (для расчёта точки начала поворота)
+        
         self.ship_length = getattr(ship, 'length', 100.0)
-        self.turn_radius_distance = 2.0 * self.ship_length
-
-        # Текущий режим
+        
+        # === ТАБЛИЦА РАССТОЯНИЙ НАЧАЛА МАНЕВРА (формула 1) ===
+        # Эмпирическая зависимость расстояния начала манёвра от угла поворота
+        self.turn_distance_table = {
+            30: 500,
+            45: 700,
+            60: 900,
+            90: 1200,
+            120: 1600,
+            180: 2200,
+        }
+        
+        # === КОЭФФИЦИЕНТЫ РЕГУЛЯТОРА (формула 3) ===
+        # ПИД по курсу (работает с ГРАДУСАМИ)
+        self.a_pr = 3.0
+        self.a_in = 0.002
+        self.a_d = 0.3
+        
+        # П по отклонению от траектории
+        self.b_pr = 0.01
+        self.b_in = 0.0
+        
+        # Интегралы для регулятора
+        self.integral_heading_error = 0.0
+        self.prev_heading_error = 0.0
+        self.integral_cross_track = 0.0
+        
+        # Ограничения
+        self.max_rudder = 35.0  # градусов
+        self.max_course_correction = 30.0  # градусов (макс поправка за отклонение)
+        
+        # === ПАРАМЕТРЫ ===
         self.mode = self.MODE_ROUTE
         self.hold_course_rad = None
-
-        # Индекс текущего сегмента маршрута
         self.current_segment_index = 0
-
-        # === НАСТРОЙКИ КАСКАДНЫХ ПИД-РЕГУЛЯТОРОВ ===
-
-        # Уровень 1: Дистанция до траектории → поправка к курсу (рад)
-        # kp=0.02: при ошибке 100 м поправка ~2 рад (ограничено ±60°)
-        self.pid_distance = PIDController(
-            kp=0.02, ki=0.0005, kd=0.01,
-            output_min=-np.pi / 3, output_max=np.pi / 3
-        )
-
-        # Уровень 2: Ошибка курса → желаемая угловая скорость (рад/с)
-        # kp=0.8: при ошибке 1 рад (~57°) желаемая скорость поворота ~0.8 рад/с
-        self.pid_course = PIDController(
-            kp=0.8, ki=0.05, kd=0.4,
-            output_min=-0.3, output_max=0.3
-        )
-
-        # Уровень 3: Ошибка угловой скорости → перекладка руля (градусы)
-        # kp=15: для создания скорости 0.1 рад/с нужен руль ~1.5°
-        self.pid_rate = PIDController(
-            kp=15.0, ki=1.0, kd=3.0,
-            output_min=-35.0, output_max=35.0
-        )
-
-    # ========== УПРАВЛЕНИЕ РЕЖИМАМИ ==========
+        
+        # Флаг: достигли ли первого плеча траектории
+        self.reached_first_leg = False
+        
+        # === ОТЛАДОЧНЫЕ ДАННЫЕ (для UI) ===
+        self.debug_d1 = 0.0
+        self.debug_d2 = 0.0
+        self.debug_cross_track = 0.0
+        self.debug_course_correction = 0.0
+        self.debug_course_on_leg = 0.0
+        self.debug_segment_name = ""
+        self.debug_route_name = ""
+        self.debug_turn_distance = 0.0  # Расстояние начала манёвра из таблицы
+        self.debug_turn_angle = 0.0     # Угол поворота
 
     def set_hold_course(self, course_deg):
-        """
-        Переключиться в режим удержания курса (команда от LLM).
-        Авторулевой будет удерживать заданный курс через каскад ПИД.
-
-        Args:
-            course_deg: желаемый курс в градусах (0-360)
-        """
+        """Переключиться в режим удержания курса (команда от LLM)"""
         self.mode = self.MODE_HOLD_COURSE
         self.hold_course_rad = np.deg2rad(course_deg)
-        # Сброс интеграторов для плавного перехода
-        self.pid_course.reset()
-        self.pid_rate.reset()
+        self.reset_integrals()
         print(f"[Autopilot] {self.ship.name}: HOLD COURSE {course_deg:.1f}°")
 
     def resume_route(self):
-        """
-        Вернуться к следованию по маршруту (команда от LLM).
-        Сбрасывает режим удержания курса и возобновляет навигацию по точкам.
-        """
+        """Вернуться к следованию по маршруту"""
         if self.mode == self.MODE_ROUTE:
             return
         self.mode = self.MODE_ROUTE
         self.hold_course_rad = None
-        # Сброс интеграторов для плавного перехода
-        self.pid_distance.reset()
-        self.pid_course.reset()
-        self.pid_rate.reset()
+        self.reset_integrals()
         print(f"[Autopilot] {self.ship.name}: RESUME ROUTE")
 
-    # ========== ГЕОМЕТРИЯ МАРШРУТА ==========
+    def reset_integrals(self):
+        """Сбросить интегралы регулятора"""
+        self.integral_heading_error = 0.0
+        self.prev_heading_error = 0.0
+        self.integral_cross_track = 0.0
 
-    def find_closest_segment(self, ship_pos):
+    def get_turn_distance(self, turn_angle_deg):
         """
-        Найти ближайший сегмент маршрута к судну.
-
-        Используется для выхода на траекторию, если судно находится
-        в стороне от маршрута.
-
-        Args:
-            ship_pos: numpy array [x, y] — позиция судна
-
-        Returns:
-            (segment_index, min_distance, closest_point)
+        Получить расстояние начала манёвра в зависимости от угла поворота.
+        Интерполяция по таблице (формула 1 из статьи).
         """
+        if turn_angle_deg <= 0:
+            return 0
+        
+        angles = sorted(self.turn_distance_table.keys())
+        
+        if turn_angle_deg <= angles[0]:
+            return self.turn_distance_table[angles[0]]
+        
+        if turn_angle_deg >= angles[-1]:
+            return self.turn_distance_table[angles[-1]]
+        
+        # Линейная интерполяция
+        for i in range(len(angles) - 1):
+            if angles[i] <= turn_angle_deg <= angles[i+1]:
+                a1, a2 = angles[i], angles[i+1]
+                d1, d2 = self.turn_distance_table[a1], self.turn_distance_table[a2]
+                return d1 + (d2 - d1) * (turn_angle_deg - a1) / (a2 - a1)
+        
+        return self.turn_distance_table[angles[-1]]
+
+    def find_nearest_point_and_segment(self, ship_pos, preferred_seg_idx=None):
+        """
+        Найти ближайшую точку на маршруте.
+        Если preferred_seg_idx задан — начинать поиск с этого сегмента.
+        """
+        if not self.route or len(self.route.points) < 2:
+            return None, None, None, 0.0, float('inf')
+        
+        # Если задан предпочтительный сегмент — начать поиск с него
+        start_idx = preferred_seg_idx if preferred_seg_idx is not None else 0
+        # Защита от выхода за границы
+        if start_idx >= len(self.route.points) - 1:
+            start_idx = len(self.route.points) - 2
+            
         min_dist = float('inf')
-        best_seg_idx = 0
+        best_seg_idx = start_idx
+        best_t = 0.0
         best_closest_point = None
-
-        for i in range(len(self.route.points) - 1):
+        
+        # Ищем только "вперед" или на текущем сегменте
+        for i in range(start_idx, len(self.route.points) - 1):
             p1 = np.array([self.route.points[i].x, self.route.points[i].y])
-            p2 = np.array([self.route.points[i + 1].x, self.route.points[i + 1].y])
-
+            p2 = np.array([self.route.points[i+1].x, self.route.points[i+1].y])
+            
             v_seg = p2 - p1
             v_ship = ship_pos - p1
-
+            
             seg_len_sq = np.dot(v_seg, v_seg)
             if seg_len_sq == 0:
                 continue
-
-            # Проекция судна на линию сегмента
+            
             t = np.dot(v_ship, v_seg) / seg_len_sq
             t = np.clip(t, 0.0, 1.0)
-
+            
             closest_point = p1 + t * v_seg
             dist = np.linalg.norm(ship_pos - closest_point)
-
+            
             if dist < min_dist:
                 min_dist = dist
                 best_seg_idx = i
+                best_t = t
                 best_closest_point = closest_point
+        
+        # Cross-track error (отклонение от траектории)
+        cross_track = 0.0
+        if best_seg_idx < len(self.route.points) - 1:
+            p1 = np.array([self.route.points[best_seg_idx].x, self.route.points[best_seg_idx].y])
+            p2 = np.array([self.route.points[best_seg_idx+1].x, self.route.points[best_seg_idx+1].y])
+            
+            v_seg = p2 - p1
+            v_seg_norm = v_seg / np.linalg.norm(v_seg)
+            
+            v_error = ship_pos - best_closest_point
+            # Знак: положительный = справа от направления движения
+            cross_track = v_seg_norm[0] * v_error[1] - v_seg_norm[1] * v_error[0]
+        
+        return best_seg_idx, best_t, best_closest_point, cross_track, min_dist
 
-        return best_seg_idx, min_dist, best_closest_point
-
-    def _check_waypoint_switch(self, ship_pos, seg_idx, p1, p2):
+    def distance_to_line(self, point, line_start, line_end):
         """
-        Проверить условие перехода к следующей точке маршрута.
-
-        Поворот начинается на дистанции, равной удвоенной длине судна.
-
-        Returns:
-            (new_seg_idx, new_p1, new_p2, switched)
+        Рассчитать расстояние от точки до прямой (бесконечной линии), 
+        проходящей через line_start и line_end.
         """
-        dist_to_next_wp = np.linalg.norm(ship_pos - p2)
+        line_vec = line_end - line_start
+        point_vec = point - line_start
+        line_len = np.linalg.norm(line_vec)
+        
+        if line_len == 0:
+            return np.linalg.norm(point_vec)
+        
+        # Модуль векторного произведения в 2D
+        cross = abs(line_vec[0] * point_vec[1] - line_vec[1] * point_vec[0])
+        return cross / line_len
 
-        if dist_to_next_wp < self.turn_radius_distance:
-            if seg_idx < len(self.route.points) - 2:
-                new_idx = seg_idx + 1
-                new_p1 = np.array([
-                    self.route.points[new_idx].x,
-                    self.route.points[new_idx].y
-                ])
-                new_p2 = np.array([
-                    self.route.points[new_idx + 1].x,
-                    self.route.points[new_idx + 1].y
-                ])
-                # Сброс интегратора дистанции при смене сегмента
-                self.pid_distance.reset()
-                return new_idx, new_p1, new_p2, True
+    def calculate_distances(self, ship_pos, seg_idx):
+        """
+        Рассчитать d1 и d2 для условия переключения (формула 2).
+        
+        d1 — расстояние до линии ТЕКУЩЕГО плеча (P_i -> P_{i+1})
+        d2 — расстояние до линии СЛЕДУЮЩЕГО плеча (P_{i+1} -> P_{i+2})
+        """
+        if seg_idx is None or seg_idx >= len(self.route.points) - 1:
+            return None, None
+        
+        # Точки текущего и следующего сегментов
+        p1 = np.array([self.route.points[seg_idx].x, self.route.points[seg_idx].y])
+        p2 = np.array([self.route.points[seg_idx+1].x, self.route.points[seg_idx+1].y])
+        
+        # d1: расстояние до линии текущего плеча
+        d1 = self.distance_to_line(ship_pos, p1, p2)
+        
+        # d2: расстояние до линии следующего плеча (если оно есть)
+        d2 = None
+        if seg_idx < len(self.route.points) - 2:
+            p3 = np.array([self.route.points[seg_idx+2].x, self.route.points[seg_idx+2].y])
+            d2 = self.distance_to_line(ship_pos, p2, p3)
+        
+        return d1, d2
+
+    def calculate_desired_course(self, ship_pos, seg_idx):
+        """
+        Рассчитать желаемый курс с учётом следующего плеча траектории.
+        Если близко к точке поворота - использовать направление следующего плеча.
+        """
+        if seg_idx is None or seg_idx < 0 or seg_idx >= len(self.route.points) - 1:
+            if len(self.route.points) >= 2:
+                seg_idx = len(self.route.points) - 2
             else:
-                # Конец маршрута
-                return seg_idx, p1, p2, False
-        return seg_idx, p1, p2, False
-
-    # ========== ШАГ АВТОРУЛЕВОГО ==========
+                return None, 0
+        
+        p1 = np.array([self.route.points[seg_idx].x, self.route.points[seg_idx].y])
+        p2 = np.array([self.route.points[seg_idx+1].x, self.route.points[seg_idx+1].y])
+        
+        v_current = p2 - p1
+        current_course = np.arctan2(v_current[0], v_current[1])
+        
+        # Проверка поворота на следующее плечо
+        if seg_idx < len(self.route.points) - 2:
+            p3 = np.array([self.route.points[seg_idx+2].x, self.route.points[seg_idx+2].y])
+            v_next = p3 - p2
+            
+            angle_rad = np.arctan2(v_next[1], v_next[0]) - np.arctan2(v_current[1], v_current[0])
+            angle_deg = abs(np.degrees(angle_rad))
+            angle_deg = min(angle_deg, 360 - angle_deg)
+            
+            # Расстояние до точки поворота
+            d2 = np.linalg.norm(ship_pos - p2)
+            turn_dist = self.get_turn_distance(angle_deg)
+            
+            # Если близко к точке поворота - использовать следующее направление
+            if d2 < turn_dist:
+                next_course = np.arctan2(v_next[0], v_next[1])
+                return next_course, angle_deg
+        
+        return current_course, 0
 
     def update(self, dt):
         """
         Шаг работы авторулевого.
-
-        Args:
-            dt: шаг времени (секунды)
+        Реализация формулы (3) из статьи.
         """
         if not self.route or len(self.route.points) < 2:
             self.ship.rudder_cmd = 0
             return
 
-        # === РЕЖИМ УДЕРЖАНИЯ КУРСА (команда от LLM) ===
+        # === РЕЖИМ УДЕРЖАНИЯ КУРСА (от LLM) ===
         if self.mode == self.MODE_HOLD_COURSE:
             if self.hold_course_rad is None:
                 self.ship.rudder_cmd = 0
                 return
-
-            # Уровень 2: ошибка курса → желаемая угловая скорость
+            
             current_heading = self.ship.psi
             heading_error = self.hold_course_rad - current_heading
-            heading_error = np.arctan2(
-                np.sin(heading_error), np.cos(heading_error)
-            )
-
-            desired_yaw_rate = self.pid_course.update(heading_error, dt)
-
-            # Уровень 3: ошибка угловой скорости → руль
-            current_yaw_rate = getattr(self.ship, 'r', 0.0)
-            rate_error = desired_yaw_rate - current_yaw_rate
-            rudder_cmd = self.pid_rate.update(rate_error, dt)
-
-            self.ship.rudder_cmd = rudder_cmd
+            heading_error = np.arctan2(np.sin(heading_error), np.cos(heading_error))
+            
+            # Только ПИД по курсу (без поправки за отклонение)
+            error_deg = np.degrees(heading_error)
+            rudder_cmd = self.calculate_rudder_from_heading_error(error_deg, dt)
+            self.ship.rudder_cmd = np.clip(rudder_cmd, -self.max_rudder, self.max_rudder)
             return
 
         # === РЕЖИМ СЛЕДОВАНИЯ ПО МАРШРУТУ ===
         ship_pos = np.array([self.ship.x, self.ship.y])
-
-        # Найти ближайший сегмент (для выхода на траекторию)
-        seg_idx, dist_to_route, closest_point = self.find_closest_segment(ship_pos)
-        self.current_segment_index = seg_idx
-
-        p1 = np.array([self.route.points[seg_idx].x, self.route.points[seg_idx].y])
-        p2 = np.array([self.route.points[seg_idx + 1].x, self.route.points[seg_idx + 1].y])
-
-        # Проверить переход к следующей точке
-        seg_idx, p1, p2, switched = self._check_waypoint_switch(
-            ship_pos, seg_idx, p1, p2
-        )
-
-        if switched:
-            # Если только что переключились — пересчитать ближайшую точку
-            # для нового сегмента
-            v_seg = p2 - p1
-            v_ship = ship_pos - p1
-            seg_len_sq = np.dot(v_seg, v_seg)
-            if seg_len_sq > 0:
-                t = np.dot(v_ship, v_seg) / seg_len_sq
-                t = np.clip(t, 0.0, 1.0)
-                closest_point = p1 + t * v_seg
-
-        # Проверить конец маршрута
-        if seg_idx >= len(self.route.points) - 2:
-            dist_to_last = np.linalg.norm(ship_pos - p2)
-            if dist_to_last < self.turn_radius_distance:
-                # Достигли конца маршрута — удержание последнего курса
-                self.pid_distance.reset()
-                self.pid_course.reset()
-                self.pid_rate.reset()
+        
+        # Найти ближайшую точку на маршруте, начиная с текущего сегмента
+        seg_idx, t, closest_point, cross_track, min_dist = \
+            self.find_nearest_point_and_segment(ship_pos, self.current_segment_index)
+        
+        if seg_idx is None or closest_point is None:
+            self.ship.rudder_cmd = 0
+            return
+        
+        # Проверка: достигли ли первого плеча
+        if seg_idx == 0 and t > 0.1:
+            self.reached_first_leg = True
+        
+        # Сохраняем cross_track для отладки
+        self.debug_cross_track = cross_track
+        
+        # === УСЛОВИЕ ПЕРЕКЛЮЧЕНИЯ (формула 2) ===
+        # Рассчитать d1 и d2
+        d1, d2 = self.calculate_distances(ship_pos, seg_idx)
+        
+        # Сохраняем для отладки
+        self.debug_d1 = d1 if d1 is not None else 0.0
+        self.debug_d2 = d2 if d2 is not None else 0.0
+        
+        # Имя текущего сегмента для отладки
+        if seg_idx < len(self.route.points) - 1:
+            name1 = self.route.points[seg_idx].name if hasattr(self.route.points[seg_idx], 'name') else f"P{seg_idx+1}"
+            name2 = self.route.points[seg_idx+1].name if hasattr(self.route.points[seg_idx+1], 'name') else f"P{seg_idx+2}"
+            self.debug_segment_name = f"{name1}-{name2}"
+        else:
+            self.debug_segment_name = "END"
+        
+        self.debug_route_name = self.route.name if self.route else ""
+        
+        if d1 is not None and d2 is not None and seg_idx < len(self.route.points) - 2:
+            # Рассчитать угол поворота и расстояние начала манёвра
+            p_next = np.array([self.route.points[seg_idx+1].x, self.route.points[seg_idx+1].y])
+            if seg_idx < len(self.route.points) - 2:
+                p_next2 = np.array([self.route.points[seg_idx+2].x, self.route.points[seg_idx+2].y])
+                v_curr = p_next - np.array([self.route.points[seg_idx].x, self.route.points[seg_idx].y])
+                v_next = p_next2 - p_next
+                angle_rad = np.arctan2(v_next[1], v_next[0]) - np.arctan2(v_curr[1], v_curr[0])
+                turn_angle = abs(np.degrees(angle_rad))
+                turn_angle = min(turn_angle, 360 - turn_angle)
+            else:
+                turn_angle = 0
+            
+            turn_dist = self.get_turn_distance(turn_angle)
+            self.debug_turn_distance = turn_dist
+            self.debug_turn_angle = turn_angle
+            
+            # Переключение когда d2 < turn_dist(угол) или d2 < d1
+            if d2 < turn_dist or d2 < d1:
+                seg_idx = seg_idx + 1
+                # Сохраняем индекс в атрибут
+                self.current_segment_index = seg_idx
+                # Сбросить интегралы для нового сегмента
+                self.reset_integrals()
+                print(f"[Autopilot] {self.ship.name}: Switched to segment {seg_idx} (d2={d2:.0f}m < turn_dist={turn_dist:.0f}m)")
+        
+        # Рассчитать желаемый курс
+        desired_course, turn_angle = self.calculate_desired_course(ship_pos, seg_idx)
+        
+        if desired_course is None:
+            # Если курс не удалось рассчитать, используем направление к следующей точке
+            if seg_idx < len(self.route.points) - 1:
+                p1 = np.array([self.route.points[seg_idx].x, self.route.points[seg_idx].y])
+                p2 = np.array([self.route.points[seg_idx+1].x, self.route.points[seg_idx+1].y])
+                desired_course = np.arctan2(p2[0] - p1[0], p2[1] - p1[1])
+            else:
                 self.ship.rudder_cmd = 0
                 return
+        
+        # === ЗАКОН УПРАВЛЕНИЯ (формула 3) ===
+        # Поправка за отклонение (только если достигли первого плеча)
+        if self.reached_first_leg:
+            # ΔK_χ = b_pr * χ (в градусах)
+            course_correction_deg = self.b_pr * cross_track
+            
+            # Ограничить поправку
+            course_correction_deg = np.clip(course_correction_deg, -self.max_course_correction, self.max_course_correction)
+        else:
+            # До первого плеча отклонение не учитывается
+            course_correction_deg = 0.0
+        
+        # Сохраняем поправку для отладки
+        self.debug_course_correction = course_correction_deg
+        self.debug_course_on_leg = np.degrees(desired_course)
+        
+        # Полный желаемый курс (в градусах)
+        desired_heading_deg = np.degrees(desired_course) + course_correction_deg
+        
+        # Ошибка по курсу (в градусах)
+        current_heading_deg = np.degrees(self.ship.psi)
+        heading_error_deg = desired_heading_deg - current_heading_deg
+        # Нормализация в диапазон [-180, 180]
+        heading_error_deg = (heading_error_deg + 180) % 360 - 180
+        
+        # ПИД-регулятор по курсу
+        rudder_cmd = self.calculate_rudder_from_heading_error(heading_error_deg, dt)
+        self.ship.rudder_cmd = np.clip(rudder_cmd, -self.max_rudder, self.max_rudder)
+        
+        # Проверка конца маршрута
+        if seg_idx >= len(self.route.points) - 2:
+            dist_to_end = np.linalg.norm(ship_pos - closest_point)
+            if dist_to_end < self.ship_length:
+                self.reset_integrals()
+                self.ship.rudder_cmd = 0
 
-        # Вектор сегмента и его длина
-        v_seg = p2 - p1
-        seg_length = np.linalg.norm(v_seg)
-        if seg_length < 0.1:
-            return
-
-        # Единичный вектор направления сегмента
-        v_seg_norm = v_seg / seg_length
-
-        # Базовый курс сегмента (угол от севера по часовой стрелке)
-        course_segment = np.arctan2(v_seg_norm[0], v_seg_norm[1])
-
-        # === УРОВЕНЬ 1: Дистанция → Курс ===
-        # Вектор от ближайшей точки на сегменте к судну
-        v_error = ship_pos - closest_point
-        cross_track_dist = np.linalg.norm(v_error)
-
-        # Знак ошибки (слева или справа от траектории)
-        # 2D векторное произведение: cross = v_seg_x * v_error_y - v_seg_y * v_error_x
-        cross = v_seg_norm[0] * v_error[1] - v_seg_norm[1] * v_error[0]
-
-        # error_dist со знаком: положительный — судно справа от курса
-        # (в системе, где psi растёт по часовой от севера)
-        error_dist = cross * cross_track_dist
-
-        course_correction = self.pid_distance.update(error_dist, dt)
-        desired_course = course_segment + course_correction
-        desired_course = np.arctan2(
-            np.sin(desired_course), np.cos(desired_course)
-        )
-
-        # === УРОВЕНЬ 2: Курс → Угловая скорость ===
-        current_heading = self.ship.psi
-        heading_error = desired_course - current_heading
-        heading_error = np.arctan2(
-            np.sin(heading_error), np.cos(heading_error)
-        )
-
-        desired_yaw_rate = self.pid_course.update(heading_error, dt)
-
-        # === УРОВЕНЬ 3: Угловая скорость → Руль ===
-        current_yaw_rate = getattr(self.ship, 'r', 0.0)
-        rate_error = desired_yaw_rate - current_yaw_rate
-
-        rudder_cmd = self.pid_rate.update(rate_error, dt)
-
-        self.ship.rudder_cmd = rudder_cmd
-
-    # ========== ОТЛАДКА ==========
+    def calculate_rudder_from_heading_error(self, error_deg, dt):
+        """
+        Рассчитать перекладку руля из ошибки курса по ПИД-закону.
+        Вход и выход в ГРАДУСАХ.
+        δ = a_pr * e + a_in * ∫e dt + a_d * de/dt
+        """
+        # Пропорциональная составляющая
+        p_term = self.a_pr * error_deg
+        
+        # Интегральная составляющая с anti-windup
+        self.integral_heading_error += error_deg * dt
+        max_integral = (self.max_rudder - abs(p_term)) / self.a_in if self.a_in != 0 else 0
+        self.integral_heading_error = np.clip(self.integral_heading_error, -max_integral, max_integral)
+        i_term = self.a_in * self.integral_heading_error
+        
+        # Дифференциальная составляющая
+        derivative = (error_deg - self.prev_heading_error) / dt if dt > 0 else 0
+        d_term = self.a_d * derivative
+        
+        self.prev_heading_error = error_deg
+        
+        return p_term + i_term + d_term
 
     def get_debug_info(self):
-        """
-        Получить отладочную информацию о состоянии авторулевого.
-
-        Returns:
-            dict с текущими параметрами
-        """
-        mode_str = "ROUTE" if self.mode == self.MODE_ROUTE else "HOLD"
+        """Получить отладочную информацию для диалога"""
         info = {
-            'mode': mode_str,
-            'segment': self.current_segment_index,
+            'route_name': self.debug_route_name,
+            'segment': self.debug_segment_name,
+            'd1': self.debug_d1,
+            'd2': self.debug_d2,
+            'cross_track': self.debug_cross_track,
+            'course_on_leg': self.debug_course_on_leg,
+            'course_correction': self.debug_course_correction,
             'rudder_cmd': self.ship.rudder_cmd,
+            'mode': "ROUTE" if self.mode == self.MODE_ROUTE else "HOLD",
+            'hold_course': np.degrees(self.hold_course_rad) if self.hold_course_rad else None,
+            'turn_distance': self.debug_turn_distance,  # ← Динамический порог из таблицы
+            'turn_angle': self.debug_turn_angle,
         }
-
-        if self.mode == self.MODE_HOLD_COURSE and self.hold_course_rad is not None:
-            info['hold_course_deg'] = np.rad2deg(self.hold_course_rad)
-
         return info

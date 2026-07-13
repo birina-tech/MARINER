@@ -38,6 +38,10 @@ class Ship:
         self.assigned_route = None  # Ссылка на объект Route
         self.autopilot = None  # Экземпляр RouteAutopilot
         self.autopilot_enabled = False  # Флаг включения авторулевого
+        # Для отслеживания маневра LLM
+        self.in_maneuver = False  # Флаг: судно выполняет маневр расхождения
+        self.maneuver_course_deg = None  # Курс, заданный для маневра
+        self.maneuver_target_course = None  # Целевой курс маневра
 
     def update(self, dt):
         tau_c = np.clip(self.rudder_cmd * np.pi / 180 * (20 / 35), -20, 20)
@@ -100,6 +104,24 @@ class Ship:
     def get_llm_status_text(self):
         if not self.llm_controlled:
             return ""
+        
+        # Если судно под авторулевым — показываем курс, а не руль
+        autopilot = getattr(self, 'autopilot', None)
+        autopilot_enabled = getattr(self, 'autopilot_enabled', False)
+        
+        if autopilot_enabled and autopilot is not None:
+            if autopilot.mode == 1:  # MODE_HOLD_COURSE
+                # Показываем курс, который держит авторулевой
+                hold_course = np.degrees(autopilot.hold_course_rad) if autopilot.hold_course_rad else None
+                if hold_course is not None:
+                    return f"\nLLM: HOLD {hold_course:.0f}°"
+                else:
+                    return "\nLLM: HOLD (no course)"
+            else:
+                # Режим ROUTE — судно идёт по траектории
+                return "\nLLM: ROUTE"
+        
+        # Обычное судно без авторулевого — показываем руль/RPM
         if self.llm_decision:
             rudder = self.llm_decision.get('rudder_deg', 0)
             rpm = self.llm_decision.get('rpm_percent', 50)
