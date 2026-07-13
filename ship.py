@@ -47,6 +47,7 @@ class Ship:
         self.maneuver_target_course = None  # Целевой курс маневра
         self.in_maneuver = False # True if ship's current heading (self.psi) deviates by more than 1 degrees from its base_heading_deg
         self.llm_reasoning = ""  # LLM desicion reasoning
+        
         # Initialize an empty list to store historical snapshots
         self.trajectory_history = []
 

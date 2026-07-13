@@ -1,150 +1,151 @@
 """
-llm_decisions_window.py
-GUI that renders and updates individual LLM decision making processes cleanly.
+llm_controller.py
+Universal LLM coordinator powered by LiteLLM.
 """
-from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-                             QPushButton, QLabel, QTableWidget, QTableWidgetItem,
-                             QHeaderView, QScrollArea)
-from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QColor, QFont  
+import json
+import os
+import litellm
+from agent_prompts import AUTOPILOT_SYSTEM_PROMPT
+
+# Suppress litellm telemetry
+litellm.telemetry = False
+# SAFETY VALVE: Drop unsupported parameters instead of crashing
+litellm.drop_params = True
 
 
-class LLMDecisionsWindow(QMainWindow):
-    """LLM Window displaying decentralized decisions per vessel"""
-    
-    def __init__(self, ships_ref, llm_coordinator_ref=None):
-        super().__init__()
-        self.ships_ref = ships_ref
-        self.llm_coordinator_ref = llm_coordinator_ref
-        
-        self.setWindowTitle("LLM Decisions Monitor")
-        self.resize(900, 600)
-        
-        self.init_ui()
-        
-        self.timer = QTimer()
-        self.timer.timeout.connect(self.update_table)
-        self.timer.start(1000)  # Update every second
-        
-        self.update_table()
-    
-    def init_ui(self):
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        layout = QVBoxLayout(central_widget)
-        
-        title_label = QLabel("LLM Control Decisions & Reasoning (Independent Perspectives)")
-        title_label.setStyleSheet("font-size: 16px; font-weight: bold; padding: 10px; background-color: #e3f2fd;")
-        title_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(title_label)
-        
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        
-        self.table = QTableWidget()
-        self.table.setColumnCount(5)
-        self.table.setHorizontalHeaderLabels([
-            "Vessel",
-            "Status",
-            "Rudder (°)",
-            "RPM (%)",
-            "LLM Reasoning"
-        ])
-        
-        header = self.table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(4, QHeaderView.Stretch)
-        
-        scroll.setWidget(self.table)
-        layout.addWidget(scroll)
-        
-        btn_close = QPushButton("Close window")
-        btn_close.clicked.connect(self.close)
-        layout.addWidget(btn_close)
-    
-    def update_table(self):
-        """Обновить таблицу решений LLM"""
-        ships = self.ships_ref() if callable(self.ships_ref) else self.ships_ref
-        
-        if not ships:
-            self.table.setRowCount(0)
-            return
-        
-        self.table.setRowCount(0)
-        row = 0
-        
-        for ship in ships:
-            if not ship.llm_controlled:
-                continue
-            
-            self.table.insertRow(row)
-            
-            # 1. Имя судна
-            name_item = QTableWidgetItem(ship.name)
-            name_item.setFont(QFont("Arial", 10, QFont.Bold))
-            self.table.setItem(row, 0, name_item)
+class LLMCoordinator:
+    PROVIDERS = {
+        'ollama': {
+            'name': 'Ollama (local)',
+            'prefix': 'ollama/',
+            'models': ['llama3', 'llama3.1:70b', 'qwen2.5:72b', 'mistral', 'deepseek-r1'],
+            'default_model': 'llama3',
+            'needs_key': False
+        },
+        'openai': {
+            'name': 'OpenAI GPT-4o',
+            'prefix': 'openai/',
+            'models': ['gpt-4o', 'gpt-4o-mini'],
+            'default_model': 'gpt-4o',
+            'needs_key': True,
+            'key_env': 'OPENAI_API_KEY'
+        },
+        'anthropic': {
+            'name': 'Anthropic Claude',
+            'prefix': 'anthropic/',
+            'models': ['claude-haiku-4-5-20251001', 'claude-3-5-sonnet-20241022'],
+            'default_model': 'claude-haiku-4-5-20251001',
+            'needs_key': True,
+            'key_env': 'ANTHROPIC_API_KEY'
+        },
+        'gemini': {
+            'name': 'Google Gemini',
+            'prefix': 'gemini/',
+            'models': ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.5-flash'],
+            'default_model': 'gemini-1.5-flash',
+            'needs_key': True,
+            'key_env': 'GEMINI_API_KEY'
+        },
+        'qwen': {
+            'name': 'Alibaba Qwen',
+            'prefix': 'hosted_vllm/', 
+            'models': ['qwen3.7-plus'],
+            'default_model': 'qwen3.7-plus',
+            'needs_key': True,
+            'key_env': 'QWEN_API_KEY',
+            'api_base': 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+        },
+        'groq': {
+            'name': 'Groq (fast, free)',
+            'prefix': 'groq/',
+            'models': ['llama-3.3-70b-versatile', 'mixtral-8x7b-32768'],
+            'default_model': 'llama-3.3-70b-versatile',
+            'needs_key': True,
+            'key_env': 'GROQ_API_KEY'
+        },
+        'deepseek': {
+            'name': 'DeepSeek Cloud API',
+            'prefix': 'deepseek/',
+            'models': ['deepseek-chat', 'deepseek-reasoner'],
+            'default_model': 'deepseek-chat',
+            'needs_key': True,
+            'key_env': 'DEEPSEEK_API_KEY'
+        }
+    }
 
-            # 2. Извлечение обоснования (Cleaned layout without legacy duplicate)
-            reasoning = ""
-            if hasattr(ship, 'llm_decision') and ship.llm_decision:
-                reasoning = ship.llm_decision.get('reasoning', '')
-            
-            if not reasoning and hasattr(ship, 'llm_reasoning'):
-                reasoning = ship.llm_reasoning
-            
-            if not reasoning:
-                if ship.in_maneuver:
-                    if ship.rudder_cmd > 0:
-                        reasoning = f"Turning starboard {ship.rudder_cmd:.0f}° to avoid collision"
-                    elif ship.rudder_cmd < 0:
-                        reasoning = f"Turning port {ship.rudder_cmd:.0f}° to avoid collision"
-                    else:
-                        reasoning = "Reducing speed for safety"
-                else:
-                    reasoning = "Maintaining course and speed - no collision risk"
+    def __init__(self, provider='ollama', model=None, api_key=None):
+        self.provider = provider
+        config = self.PROVIDERS.get(provider, self.PROVIDERS['ollama'])
 
-            # 3. Статус обработки удержания/возврата курса
-            if ship.in_maneuver:
-                if "Deterministic" in reasoning or "RETURN_TO_COURSE" in reasoning:
-                    status = "RETURN TO COURSE"
-                    status_color = QColor(135, 206, 250)
-                else:
-                    status = "MANEUVERING"
-                    status_color = QColor(255, 200, 0)
+        raw_model = model or config['default_model']
+        self.model = f"{config.get('prefix', '')}{raw_model}"
+        
+        self.api_base = config.get('api_base')
+        self.last_status = None
+        self.last_error = None
+
+        if config.get('key_env'):
+            if api_key:
+                os.environ[config['key_env']] = api_key
             else:
-                status = "ON COURSE"
-                status_color = QColor(144, 238, 144)
+                os.environ.pop(config['key_env'], None)
+
+    def test_connection(self):
+        """Provider connection check using LiteLLM."""
+        response = None  
+        try:
+            config = self.PROVIDERS.get(self.provider, {})
+            env_key = config.get('key_env')
             
-            status_item = QTableWidgetItem(status)
-            status_item.setBackground(status_color)
-            self.table.setItem(row, 1, status_item)
-            
-            # 4. Вывод значений руля
-            rudder_item = QTableWidgetItem(f"{ship.rudder_cmd:+.1f}°")
-            if abs(ship.rudder_cmd) > 15:
-                rudder_item.setBackground(QColor(255, 150, 150))
-            self.table.setItem(row, 2, rudder_item)
-            
-            # 5. Вывод RPM
-            rpm_item = QTableWidgetItem(f"{ship.rpm_cmd:.0f}%")
-            if ship.rpm_cmd < 40 or ship.rpm_cmd > 60:
-                rpm_item.setBackground(QColor(255, 200, 150))
-            self.table.setItem(row, 3, rpm_item)
-            
-            # 6. Вставка очищенной строки обоснования
-            reasoning_item = QTableWidgetItem(reasoning)
-            self.table.setItem(row, 4, reasoning_item)
-            
-            row += 1
+            if env_key and not os.environ.get(env_key):
+                return False, f"Connection Error: API Key for {self.provider} is empty or missing."
+
+            kwargs = {
+                "model": self.model,
+                "messages": [{"role": "user", "content": "Hi"}]
+            }
+            if self.api_base:
+                kwargs["api_base"] = self.api_base
+
+            response = litellm.completion(**kwargs)
+            return True, f"Connection to {self.provider} successful!"
+        except Exception as e:
+            return False, f"Connection Error: {str(e)}"
         
-        if row == 0:
-            self.table.setRowCount(1)
-            no_data_item = QTableWidgetItem("No vessels under LLM control")
-            no_data_item.setForeground(QColor(128, 128, 128))
-            self.table.setItem(0, 0, no_data_item)
-            self.table.setSpan(0, 0, 1, 5)
+    def get_ego_command(self, collision_data): 
+        if not collision_data or not collision_data.get('pairs'):
+            return {"rudder_deg": 0, "rpm_percent": 50, "reasoning": "No threats"}
+
+        user_message = (f"Determine the maneuver for your vessel based on this telemetry:\n\n"
+                        f"{json.dumps(collision_data, indent=2)}\n\n"
+                        f"Generate your command.")
+        
+        messages = [
+            {"role": "system", "content": AUTOPILOT_SYSTEM_PROMPT},
+            {"role": "user", "content": user_message}
+        ]
+
+        response = None  # <-- Add this initialization safe-guard
+        try:
+            kwargs = {
+                "model": self.model,
+                "messages": messages,
+                "temperature": 0.1,
+                "response_format": {"type": "json_object"}
+            }
+            if self.api_base:
+                kwargs["api_base"] = self.api_base
+
+            response = litellm.completion(**kwargs)
+            
+            content = response.choices[0].message.content
+            content = content.replace("```json", "").replace("```", "").strip()
+            command = json.loads(content)
+            
+            self.last_status = 'ok'
+            return command
+
+        except Exception as e:
+            self.last_status = 'error'
+            self.last_error = str(e)
+            return {"rudder_deg": 0, "rpm_percent": 50, "reasoning": f"API Error: {str(e)}"}

@@ -1,6 +1,6 @@
 """
 canvas.py
-Холст для отображения судов, маршрутов и прогнозируемых треков
+Canvas for displaying vessels, routes, and predicted tracks.
 """
 import numpy as np
 from PyQt5.QtCore import Qt
@@ -33,26 +33,26 @@ class ShipCanvas(FigureCanvas):
         self.vector_length_minutes = 12.0
         self.track_length_meters = 5000.0
 
-        # Единицы измерения
+        # Measurement Units
         self.use_miles = use_miles
         self.use_knots = use_knots
 
-        # Прогнозируемые треки и маршруты
+        # Predicted tracks and routes
         self.predicted_tracks = {}
         self.routes = []
 
-        # Режим редактирования маршрута
+        # Route editing session controls
         self.editing_route = None
         self.dragging_point_index = None
-        self.route_point_click_radius = 80  # радиус захвата точки маршрута (пиксели)
+        self.route_point_click_radius = 80  # Grab radius of route points (pixels)
 
-        # Убираем все отступы
+        # Clear bounding paddings
         self.fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
 
         self.ax.set_xlim(-self.view_scale, self.view_scale)
         self.ax.set_ylim(-self.view_scale, self.view_scale)
 
-        # Метки ВНУТРИ области построения
+        # Inside ticks formatting setup
         self.ax.tick_params(axis='both', which='both', direction='in',
                             top=True, right=True, left=True, bottom=True)
         self.ax.tick_params(axis='x', which='both', pad=-15)
@@ -78,7 +78,6 @@ class ShipCanvas(FigureCanvas):
         h = event.size().height()
         if w > 0 and h > 0:
             self.fig.set_size_inches(w / self.fig.dpi, h / self.fig.dpi)
-            # Передаём все параметры с именами
             self.update_plot(
                 self.ships, False, 0.0,
                 use_miles=self.use_miles,
@@ -107,14 +106,10 @@ class ShipCanvas(FigureCanvas):
                 self.view_center_y - y_range, self.view_center_y + y_range)
 
     def get_clicked_route_point(self, x, y):
-        """
-        Проверить, попал ли клик на точку маршрута.
-        Возвращает (route, point_index) или (None, None).
-        """
+        """Verify if mouse coordinate intersection hits a waypoint."""
         if x is None or y is None:
             return None, None
 
-        # Преобразуем координаты в пиксели для сравнения
         bbox = self.ax.get_window_extent()
         xlim = self.ax.get_xlim()
         ylim = self.ax.get_ylim()
@@ -141,9 +136,8 @@ class ShipCanvas(FigureCanvas):
             return
 
         if event.button == 1:
-            # ЛКМ — если в режиме перетаскивания точки маршрута
+            # LMB Selection - Check if drag state change is triggered on an active route point
             if self.dragging_point_index is not None and self.editing_route:
-                # Перемещаем точку маршрута
                 route = self.editing_route
                 idx = self.dragging_point_index
                 if 0 <= idx < len(route.points):
@@ -151,12 +145,11 @@ class ShipCanvas(FigureCanvas):
                     route.points[idx].y = event.ydata
                     route._recalculate()
                     self.draw()
-                    # Уведомить родительское окно об изменении
                     if self.on_route_point_moved_callback:
                         self.on_route_point_moved_callback(route, idx)
                 return
 
-            # Иначе — стандартное панорамирование
+            # Standard view panning initialization
             self.is_panning = True
             self.pan_start_pos = (event.x, event.y)
             self.pan_start_center = (self.view_center_x, self.view_center_y)
@@ -166,16 +159,13 @@ class ShipCanvas(FigureCanvas):
         if event.button == 3:
             x, y = event.xdata, event.ydata
 
-            # Проверяем клик на точку маршрута
             route, point_idx = self.get_clicked_route_point(x, y)
-
             if route is not None and point_idx is not None:
-                # Если есть callback для клика на точку маршрута — вызываем его
                 if self.on_route_point_click_callback:
                     self.on_route_point_click_callback(route, point_idx, x, y)
                 return
 
-            # Стандартная логика ПКМ
+            # Vessel boundary checking criteria selection
             clicked_ship = None
             click_radius = max(60, self.view_scale * 0.02)
             for ship in self.ships:
@@ -216,7 +206,7 @@ class ShipCanvas(FigureCanvas):
             self.ax.set_ylim(y_min, y_max)
             self.draw()
 
-        # Если перетаскиваем точку маршрута
+        # Update dragged waypoint locations dynamically
         if (self.dragging_point_index is not None and 
                 self.editing_route and event.inaxes == self.ax):
             route = self.editing_route
@@ -236,7 +226,6 @@ class ShipCanvas(FigureCanvas):
     def on_release(self, event):
         if event.button == 1:
             if self.dragging_point_index is not None:
-                # Завершаем перетаскивание точки маршрута
                 self.dragging_point_index = None
                 self.setCursor(Qt.OpenHandCursor)
                 return
@@ -270,7 +259,7 @@ class ShipCanvas(FigureCanvas):
                                          lw=0.5, mutation_scale=15), zorder=6)
 
     def _apply_tick_style(self):
-        """Применяет стиль меток"""
+        """Apply localized frame tick stylings."""
         self.ax.tick_params(axis='both', which='both', direction='in',
                             top=True, right=True, left=True, bottom=True)
         self.ax.tick_params(axis='x', which='both', pad=-15)
@@ -286,16 +275,12 @@ class ShipCanvas(FigureCanvas):
                     use_miles=None, use_knots=None,
                     predicted_tracks=None, routes=None,
                     ego_perspective=None):
-        """
-        Обновить график.
-        """
-        # Инициализация значений по умолчанию
+        """Update scene layout frames completely."""
         if predicted_tracks is None:
             predicted_tracks = {}
         if routes is None:
             routes = []
 
-        # Сохраняем параметры
         if use_miles is not None:
             self.use_miles = use_miles
         if use_knots is not None:
@@ -310,20 +295,15 @@ class ShipCanvas(FigureCanvas):
         x_min, x_max, y_min, y_max = self._get_view_limits()
         self.ax.set_xlim(x_min, x_max)
         self.ax.set_ylim(y_min, y_max)
-
         self.ax.set_aspect('equal')
 
-        # Применяем стиль меток после clear()
         self._apply_tick_style()
 
-        # Форматирование меток осей
+        # Handle axis metric mapping transformations
         if self.use_miles:
             def format_axis_miles(x, pos):
                 miles = x / 1852.0
-                if abs(miles) >= 1:
-                    return f"{miles:.1f}"
-                else:
-                    return f"{miles:.2f}"
+                return f"{miles:.1f}" if abs(miles) >= 1 else f"{miles:.2f}"
 
             self.ax.xaxis.set_major_formatter(FuncFormatter(format_axis_miles))
             self.ax.yaxis.set_major_formatter(FuncFormatter(format_axis_miles))
@@ -351,38 +331,18 @@ class ShipCanvas(FigureCanvas):
             route_x = [c[0] for c in coordinates]
             route_y = [c[1] for c in coordinates]
 
-            # Route Line
-            self.ax.plot(route_x, route_y,
-                         color='blue', linewidth=2, linestyle='-',
-                         alpha=0.6, zorder=2)
+            self.ax.plot(route_x, route_y, color='blue', linewidth=2, linestyle='-', alpha=0.6, zorder=2)
+            self.ax.plot(route_x, route_y, marker='o', markersize=8, color='blue', markeredgecolor='black', markeredgewidth=1.5, zorder=3)
 
-            # Route Points
-            self.ax.plot(route_x, route_y,
-                         marker='o', markersize=8,
-                         color='blue', markeredgecolor='black',
-                         markeredgewidth=1.5, zorder=3)
-
-            # Route Point Numbers
             for point in route.points:
-                self.ax.text(point.x + 100, point.y + 100,
-                             f"P{point.point_number}",
-                             fontsize=9, fontweight='bold',
-                             color='blue',
-                             bbox=dict(boxstyle='round', facecolor='white',
-                                       alpha=0.8, edgecolor='blue'),
-                             zorder=4)
+                self.ax.text(point.x + 100, point.y + 100, f"P{point.point_number}", fontsize=9, fontweight='bold', color='blue',
+                             bbox=dict(boxstyle='round', facecolor='white', alpha=0.8, edgecolor='blue'), zorder=4)
 
-            # Route Names
             if route.points:
                 mid_x = np.mean(route_x)
                 mid_y = np.mean(route_y)
-                self.ax.text(mid_x, mid_y - 200,
-                             route.name,
-                             fontsize=10, fontweight='bold',
-                             color='darkblue',
-                             bbox=dict(boxstyle='round', facecolor='yellow',
-                                       alpha=0.7, edgecolor='darkblue'),
-                             zorder=4)
+                self.ax.text(mid_x, mid_y - 200, route.name, fontsize=10, fontweight='bold', color='darkblue',
+                             bbox=dict(boxstyle='round', facecolor='yellow', alpha=0.7, edgecolor='darkblue'), zorder=4)
 
         # === Predicted Trajectories ===
         for ship_name, track_data in self.predicted_tracks.items():
@@ -403,72 +363,34 @@ class ShipCanvas(FigureCanvas):
             if len(pre_maneuver) > 1:
                 pre_x = [p[0] for p in pre_maneuver]
                 pre_y = [p[1] for p in pre_maneuver]
-                self.ax.plot(pre_x, pre_y,
-                             color=pre_color,
-                             linewidth=2.0,
-                             linestyle='--',
-                             alpha=0.7,
-                             zorder=3)
+                self.ax.plot(pre_x, pre_y, color=pre_color, linewidth=2.0, linestyle='--', alpha=0.7, zorder=3)
 
             if len(post_maneuver) > 1 and post_color:
                 post_x = [p[0] for p in post_maneuver]
                 post_y = [p[1] for p in post_maneuver]
-                self.ax.plot(post_x, post_y,
-                             color=post_color,
-                             linewidth=2.5,
-                             linestyle='-.',
-                             alpha=0.8,
-                             zorder=3)
+                self.ax.plot(post_x, post_y, color=post_color, linewidth=2.5, linestyle='-.', alpha=0.8, zorder=3)
 
             if maneuver_point and point_color:
-                self.ax.plot(maneuver_point[0], maneuver_point[1],
-                             marker='o', markersize=10,
-                             color=point_color,
-                             markeredgecolor='black',
-                             markeredgewidth=1.5,
-                             zorder=7)
-
+                self.ax.plot(maneuver_point[0], maneuver_point[1], marker='o', markersize=10, color=point_color, markeredgecolor='black', markeredgewidth=1.5, zorder=7)
                 new_course = track_data.get('new_course')
                 if new_course is not None:
-                    self.ax.text(maneuver_point[0] + 100, maneuver_point[1] + 100,
-                                 f"Turn\nto {new_course:.0f}°",
-                                 fontsize=8,
-                                 color=point_color,
-                                 fontweight='bold',
-                                 bbox=dict(boxstyle='round', facecolor='white',
-                                           alpha=0.9, edgecolor=point_color),
-                                 zorder=9)
+                    self.ax.text(maneuver_point[0] + 100, maneuver_point[1] + 100, f"Turn\nto {new_course:.0f}°", fontsize=8, color=point_color, fontweight='bold',
+                                 bbox=dict(boxstyle='round', facecolor='white', alpha=0.9, edgecolor=point_color), zorder=9)
 
         if self.predicted_tracks:
             legend_elements = [
-                Line2D([0], [0], color='#FFA500', linewidth=2, linestyle='--',
-                       label='Pre-maneuver (give-way)'),
-                Line2D([0], [0], color='#00AA00', linewidth=2.5, linestyle='-.',
-                       label='Post-maneuver (give-way)'),
-                Line2D([0], [0], color='#4444FF', linewidth=2, linestyle='--',
-                       label='Stand-on track'),
-                Line2D([0], [0], marker='o', color='w', markerfacecolor='#FF0000',
-                       markersize=10, label='Maneuver point')
+                Line2D([0], [0], color='#FFA500', linewidth=2, linestyle='--', label='Pre-maneuver (give-way)'),
+                Line2D([0], [0], color='#00AA00', linewidth=2.5, linestyle='-.', label='Post-maneuver (give-way)'),
+                Line2D([0], [0], color='#4444FF', linewidth=2, linestyle='--', label='Stand-on track'),
+                Line2D([0], [0], marker='o', color='w', markerfacecolor='#FF0000', markersize=10, label='Maneuver point')
             ]
-            self.ax.legend(handles=legend_elements, loc='upper right', fontsize=8,
-                           framealpha=0.9)
+            self.ax.legend(handles=legend_elements, loc='upper right', fontsize=8, framealpha=0.9)
 
-        # === Draw Ships === (проверить 4 последнии лиинии кода, они были гитов отмечены)
+        # === Draw Ships ===
         for ship in ships:
-            # Determine track rendering style based on perspective
             is_selected_ego = (ego_perspective is not None and ship.name == ego_perspective.name)
 
-            # Get the pentagon vertices
-            vertices = ship.get_pentagon_vertices()
-            
-            # Highlight the active EGO ship differently than targets
-            face_color = 'darkblue' if is_selected_ego else 'black'
-            edge_color = 'gold' if is_selected_ego else 'black'
-            
-            pentagon = Polygon(vertices, closed=True, facecolor=face_color,
-                            edgecolor=edge_color, linewidth=2.0, alpha=0.95, zorder=5)
-            self.ax.add_patch(pentagon)
-            
+            # Draw trajectory historical tracks trail
             track_x = []
             track_y = []
             for hx, hy in zip(ship.history_x, ship.history_y):
@@ -477,52 +399,33 @@ class ShipCanvas(FigureCanvas):
                     track_x.append(hx)
                     track_y.append(hy)
             if len(track_x) > 1:
-                self.ax.plot(track_x, track_y, color=ship.color,
-                             alpha=0.4, linewidth=1.5, linestyle='--', zorder=2)
+                self.ax.plot(track_x, track_y, color=ship.color, alpha=0.4, linewidth=1.5, linestyle='--', zorder=2)
 
-            
+            # Get the pentagon vertices & apply custom perspective colorization
             vertices = ship.get_pentagon_vertices()
-            pentagon = Polygon(vertices, closed=True, facecolor='black',
-                               edgecolor='black', linewidth=1.5, alpha=0.95, zorder=5)
+            face_color = 'darkblue' if is_selected_ego else 'black'
+            edge_color = 'gold' if is_selected_ego else 'black'
+            
+            pentagon = Polygon(vertices, closed=True, facecolor=face_color, edgecolor=edge_color, linewidth=2.0, alpha=0.95, zorder=5)
             self.ax.add_patch(pentagon)
             
             # Keep the AI controller indicator ring if applicable    
             if ship.llm_controlled:
-                rect = Rectangle((ship.x - 60, ship.y - 60), 120, 120,
-                                 fill=False, edgecolor='gold', linewidth=3, zorder=4)
+                rect = Rectangle((ship.x - 60, ship.y - 60), 120, 120, fill=False, edgecolor='gold', linewidth=3, zorder=4)
                 self.ax.add_patch(rect)
             
             self.draw_velocity_vector(ship)
             
-            # Dynamic Text block relative to current perspective view
+            # Dynamic Text box rendering parameters
             font_size = max(7, min(10, 1000 / self.view_scale * 10))
-
-            # If this ship is a target relative to our selected ego, look up the specific COLREG relationship
-            relativity_text = ""
-            if ego_perspective and not is_selected_ego:
-                # We look for decisions calculated by the target *or* look up pairs
-                # This is where your decentralized status string gets appended:
-                if hasattr(ego_perspective, 'llm_decision') and ego_perspective.llm_decision:
-                     # E.g., "Target is Give-Way to Ego"
-                     pass
-
-
-        llm_text = ship.get_llm_status_text()
-
-        # Append an explicit tag if it's the active viewer node
-        ego_tag = " [EGO]" if is_selected_ego else ""
-        
-        self.ax.text(ship.x + 80, ship.y + 80,
-                     f"{ship.name}{ego_tag}\n{ship.get_heading_deg():.0f}°\n"
-                     f"{ship.u:.1f} m/s\n"
-                     f"R:{ship.rudder_cmd:.0f}° RPM:{ship.rpm_cmd:.0f}%{llm_text}",
-                     fontsize=font_size, ha='left', va='bottom',
-                     bbox=dict(boxstyle='round', facecolor='white',
-                     alpha=0.8, edgecolor='darkblue' if is_selected_ego else 'gray'))           
-
-
-    
+            llm_text = ship.get_llm_status_text()
+            ego_tag = " [EGO]" if is_selected_ego else ""
+            
+            self.ax.text(ship.x + 80, ship.y + 80,
+                        f"{ship.name}{ego_tag}\n{ship.get_heading_deg():.0f}\u00b0\n"
+                        f"{ship.u:.1f} m/s\n"
+                        f"R:{ship.rudder_cmd:.0f}\u00b0 RPM:{ship.rpm_cmd:.0f}%{llm_text}",
+                        fontsize=font_size, ha='left', va='bottom',
+                        bbox=dict(boxstyle='round', facecolor='white', alpha=0.8, edgecolor='darkblue' if is_selected_ego else 'gray'))           
         
         self.draw()
-
-        

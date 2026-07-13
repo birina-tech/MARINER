@@ -135,7 +135,7 @@ class MainWindow(QMainWindow):
         self.action_llm_interval.triggered.connect(self.set_llm_interval)
         llm_menu.addSeparator()
         self.action_llm_status = llm_menu.addAction(f"📊 Status: {self.llm_status_text}")
-        self.action_llm_status.setEnabled(False)
+        self.action_llm_status.setEnabled(False) 
         llm_menu.addSeparator()
         self.action_llm_toggle = llm_menu.addAction("🤖 Enable LLM for all vessels")
         self.action_llm_toggle.triggered.connect(self.toggle_llm_for_all)
@@ -244,13 +244,14 @@ class MainWindow(QMainWindow):
         self.action_llm_status.setText(f"📊 Status: {self.llm_status_text}")
 
     def get_or_create_coordinator(self):
+        """Fetches or instantiates a fresh coordinator with current environment keys."""
         api_key = self.api_keys.get(self.current_provider)
-        if (self.llm_coordinator is None or
-                self.llm_coordinator.provider != self.current_provider):
-            self.llm_coordinator = LLMCoordinator(
-                provider=self.current_provider, api_key=api_key)
-        else:
-            self.llm_coordinator.api_key = api_key
+        
+        # Reconstruct the coordinator every time to securely sync OS environment variables
+        self.llm_coordinator = LLMCoordinator(
+            provider=self.current_provider, 
+            api_key=api_key
+        )
         return self.llm_coordinator
 
     def set_vector_length(self):
@@ -1233,7 +1234,7 @@ class MainWindow(QMainWindow):
             routes=self.routes,
             ego_perspective=self.selected_ego_ship
         )
-
+    '''
     def collect_collision_data(self):
         from colreg_rules import determine_colreg_situation
         from collision_analyzer import CollisionAnalyzer
@@ -1293,6 +1294,11 @@ class MainWindow(QMainWindow):
                 'maneuver_target_course': ship.maneuver_target_course,
             })
         return {'ships': ship_data_list}
+
+        
+    '''
+
+
 
     def collect_ego_data(self, ego_ship):
         from colreg_rules import determine_colreg_situation
@@ -1395,34 +1401,40 @@ class MainWindow(QMainWindow):
             'pairs': pairs_info
         }
 
+
     def on_llm_result(self, ship_name, commands):
         """Processes telemetry response commands returned from decentralized agents."""
         self.llm_pending = False
         
-        # 1. Coordinate and apply multi-agent commands
-        if self.llm_coordinator:
-            self.llm_coordinator.apply_commands(self.ships, commands)
-        else:
-            ship = next((s for s in self.ships if s.name == ship_name), None)
-            if ship and isinstance(commands, dict):
-                rudder = commands.get("rudder_deg", 0)
-                rpm = commands.get("rpm_percent", 50)
-                reasoning = commands.get("reasoning", "No reasoning provided")
+        # Find the specific target vessel this background worker belongs to
+        ship = next((s for s in self.ships if s.name == ship_name), None)
+        if not ship:
+            return
 
-                ship.apply_llm_command(rudder, rpm)
-                ship.llm_decision = commands
-                ship.llm_reasoning = reasoning
+        # Handle valid dictionary commands from the LLM Agent
+        if isinstance(commands, dict):
+            rudder = commands.get("rudder_deg", 0)
+            rpm = commands.get("rpm_percent", 50)
+            reasoning = commands.get("reasoning", "No reasoning provided")
+
+            ship.apply_llm_command(rudder, rpm)
+            ship.llm_decision = commands
+            ship.llm_reasoning = reasoning
+        # Safeguard if the worker passes back a raw string error message
+        elif isinstance(commands, str):
+            ship.llm_reasoning = commands
+            ship.llm_decision = {"rudder_deg": 0, "rpm_percent": 50, "reasoning": commands}
         
-        # 2. Process maneuvers and tracking logic for all LLM-controlled ships
-        for ship in self.ships:
-            if not ship.llm_controlled:
+        # Process maneuvers and tracking logic for all LLM-controlled ships
+        for s in self.ships:
+            if not s.llm_controlled:
                 continue
             
-            autopilot = getattr(ship, 'autopilot', None)
-            autopilot_enabled = getattr(ship, 'autopilot_enabled', False)
+            autopilot = getattr(s, 'autopilot', None)
+            autopilot_enabled = getattr(s, 'autopilot_enabled', False)
             
             if autopilot_enabled and autopilot and autopilot.mode == 1:  # MODE_HOLD_COURSE
-                current_heading = ship.get_heading_deg()
+                current_heading = s.get_heading_deg()
                 target_course = autopilot.hold_course_rad
                 
                 if target_course is not None:
@@ -1430,25 +1442,20 @@ class MainWindow(QMainWindow):
                     heading_diff = abs((current_heading - target_deg + 180) % 360 - 180)
                     
                     if heading_diff <= 5.0:
-                        if ship.in_maneuver:
-                            ship.in_maneuver = False
-                            ship.maneuver_course_deg = None
-                            ship.maneuver_target_course = None
-                            print(f"[Maneuver] {ship.name}: COMPLETED - reached target course {target_deg:.1f}°")
+                        if s.in_maneuver:
+                            s.in_maneuver = False
+                            s.maneuver_course_deg = None
+                            s.maneuver_target_course = None
+                            print(f"[Maneuver] {s.name}: COMPLETED - reached target course {target_deg:.1f}\u00b0")
                     else:
-                        if not ship.in_maneuver:
-                            ship.in_maneuver = True
-                            ship.maneuver_target_course = target_deg
-                            print(f"[Maneuver] {ship.name}: STARTED - target {target_deg:.1f}°, current {current_heading:.1f}°")
+                        if not s.in_maneuver:
+                            s.in_maneuver = True
+                            s.maneuver_target_course = target_deg
+                            print(f"[Maneuver] {s.name}: STARTED - target {target_deg:.1f}\u00b0, current {current_heading:.1f}\u00b0")
             else:
-                heading_diff = abs((ship.base_heading_deg - ship.get_heading_deg() + 180) % 360 - 180)
-                if heading_diff < 1 and getattr(ship, 'rudder_cmd', 0) == 0:
-                    ship.in_maneuver = False
-                else:
-                    if ship.in_maneuver:
-                        ship.in_maneuver = False
-                        ship.maneuver_course_deg = None
-                        ship.maneuver_target_course = None
+                heading_diff = abs((s.base_heading_deg - s.get_heading_deg() + 180) % 360 - 180)
+                if heading_diff < 1 and getattr(s, 'rudder_cmd', 0) == 0:
+                    s.in_maneuver = False
 
         if hasattr(self, 'statusBar') and self.statusBar():
             self.statusBar().showMessage(f"LLM applied for {ship_name} at t={self.simulation_time:.1f}s")
@@ -1537,6 +1544,14 @@ class MainWindow(QMainWindow):
 
 
 if __name__ == "__main__":
+    # 1. Force the high-DPI flag BEFORE any instance initialization logic happens
+    import os
+    os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
+    
+    # 2. Fire the application instance framework
     app = QApplication(sys.argv)
+    
+    # 3. Instantiate the clean window logic
     window = MainWindow()
     window.show()
+    sys.exit(app.exec_())
