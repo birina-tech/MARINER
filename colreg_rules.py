@@ -12,7 +12,7 @@ def calculate_relative_bearing(ship1, ship2):
     Рассчитать ОТНОСИТЕЛЬНЫЙ пеленг с ship1 на ship2
     Отсчитывается от курса ship1 (носа судна) по часовой стрелке 0-360°
     """
-    # Истинный пеленг на ship2 (от севера)
+    # Ship2 heading in degrees from North
     dx = ship2.x - ship1.x
     dy = ship2.y - ship1.y
     true_bearing_rad = np.arctan2(dx, dy)
@@ -20,7 +20,7 @@ def calculate_relative_bearing(ship1, ship2):
     if true_bearing_deg < 0:
         true_bearing_deg += 360
     
-    # Курс ship1 в градусах (0-360)
+    # Ship1 heading in degrees (0-360)
     ship1_course_deg = np.degrees(ship1.psi)
     if ship1_course_deg < 0:
         ship1_course_deg += 360
@@ -127,7 +127,7 @@ def check_rule_13(ship1, ship2, settings=None):
 
 def check_rule_15(ship1, ship2, settings=None):
     """
-    Правило 15 - Пересечение курсов
+    Rule 15 - Crossing Situation
     """
     if settings is None:
         settings = get_rules_settings()
@@ -153,7 +153,7 @@ def check_rule_15(ship1, ship2, settings=None):
 
 def check_rule_17_2(dist_m, cpa_m, tcpa_s, settings=None):
     """
-    Правило 17.2 - Критическое сближение
+    ПRule 17.2 - Critical approaching
     Использует настраиваемые критические значения
     """
     if settings is None:
@@ -173,7 +173,7 @@ def check_rule_17_2(dist_m, cpa_m, tcpa_s, settings=None):
 
 def check_normal_conditions(dist_m, cpa_m, tcpa_s, settings=None):
     """
-    Проверка нормальных условий для применения правил 13, 14, 15
+    Check normal conditions for rules 13, 14, 15
     Использует настраиваемые пороги
     """
     if settings is None:
@@ -219,7 +219,7 @@ def determine_colreg_situation(ship1, ship2, dist_m, cpa_m, tcpa_s):
             }
         }
     
-    # Проверка нормальных условий
+    # Check if conditionas are normal
     if not check_normal_conditions(dist_m, cpa_m, tcpa_s, settings):
         return {
             'rule': 'None',
@@ -232,7 +232,7 @@ def determine_colreg_situation(ship1, ship2, dist_m, cpa_m, tcpa_s):
             }
         }
     
-    # Проверка правила 14 (встречная)
+    # Rule 14
     is_rule_14, b1, b2 = check_rule_14(ship1, ship2, settings)
     if is_rule_14:
         return {
@@ -249,7 +249,7 @@ def determine_colreg_situation(ship1, ship2, dist_m, cpa_m, tcpa_s):
             }
         }
     
-    # Проверка правила 13 (обгон)
+    # Check for кule 13
     is_rule_13, b1, b2 = check_rule_13(ship1, ship2, settings)
     if is_rule_13:
         # Определяем, какое судно обгоняет
@@ -277,7 +277,7 @@ def determine_colreg_situation(ship1, ship2, dist_m, cpa_m, tcpa_s):
             }
         }
     
-    # Проверка правила 15 (пересечение)
+    # Check for rule 15
     is_rule_15, b1, b2 = check_rule_15(ship1, ship2, settings)
     if is_rule_15:
         def is_stand_on(bearing):

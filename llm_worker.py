@@ -1,36 +1,27 @@
-"""
-llm_worker.py
-Поток для асинхронного запроса к LLM.
-"""
 from PyQt5.QtCore import QThread, pyqtSignal
 
-
+       
+        
 class LLMWorker(QThread):
-    """Worker thread для LLM запросов"""
+    # Emit the ship's name along with its command dictionary
+    result_ready = pyqtSignal(str, dict)
+    error_occurred = pyqtSignal(str, str) # ship_name, error_msg
     
-    result_ready = pyqtSignal(dict)
-    error_occurred = pyqtSignal(str)
-
-    def __init__(self, coordinator, ships_data, collision_data):
+    def __init__(self, coordinator, ego_ship_name, collision_data):
         super().__init__()
         self.coordinator = coordinator
-        self.ships_data = ships_data
+        self.ego_ship_name = ego_ship_name
         self.collision_data = collision_data
         self.is_running = True
-
+    
     def run(self):
-        """Выполнить запрос к LLM в отдельном потоке"""
         try:
-            commands = self.coordinator.get_coordinated_commands(
-                self.ships_data,
-                self.collision_data
-            )
+            command = self.coordinator.get_ego_command(self.collision_data)
             if self.is_running:
-                self.result_ready.emit(commands)
+                self.result_ready.emit(self.ego_ship_name, command)
         except Exception as e:
             if self.is_running:
-                self.error_occurred.emit(str(e))
-
+                self.error_occurred.emit(self.ego_ship_name, str(e))
+    
     def stop(self):
-        """Остановить worker"""
         self.is_running = False

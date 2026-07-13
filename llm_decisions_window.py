@@ -1,16 +1,16 @@
 """
 llm_decisions_window.py
-Окно отображения решений LLM по управлению судами
+GUI that render and update LLM desicion making process
 """
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QPushButton, QLabel, QTableWidget, QTableWidgetItem,
                              QHeaderView, QScrollArea, QGroupBox)
 from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QColor, QFont  # ДОБАВЛЕН QFont
+from PyQt5.QtGui import QColor, QFont  
 
 
 class LLMDecisionsWindow(QMainWindow):
-    """Окно отображения решений LLM"""
+    """LLM Window"""
     
     def __init__(self, ships_ref, llm_coordinator_ref=None):
         super().__init__()
@@ -24,7 +24,7 @@ class LLMDecisionsWindow(QMainWindow):
         
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_table)
-        self.timer.start(1000)  # Обновление каждую секунду
+        self.timer.start(1000)  # Update every second
         
         self.update_table()
     
@@ -33,19 +33,19 @@ class LLMDecisionsWindow(QMainWindow):
         self.setCentralWidget(central_widget)
         layout = QVBoxLayout(central_widget)
         
-        # Заголовок
+        # Heading
         title_label = QLabel("LLM Control Decisions & Reasoning")
         title_label.setStyleSheet("font-size: 16px; font-weight: bold; padding: 10px; background-color: #e3f2fd;")
         title_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(title_label)
         
-        # Создаём scroll area для таблицы
+        # Scroll area 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         
-        # Таблица
+        # Table
         self.table = QTableWidget()
         self.table.setColumnCount(5)
         self.table.setHorizontalHeaderLabels([
@@ -66,7 +66,7 @@ class LLMDecisionsWindow(QMainWindow):
         scroll.setWidget(self.table)
         layout.addWidget(scroll)
         
-        # Кнопка закрытия
+        # Close button
         btn_close = QPushButton("Close window")
         btn_close.clicked.connect(self.close)
         layout.addWidget(btn_close)
@@ -92,14 +92,37 @@ class LLMDecisionsWindow(QMainWindow):
             name_item = QTableWidgetItem(ship.name)
             name_item.setFont(QFont("Arial", 10, QFont.Bold))
             self.table.setItem(row, 0, name_item)
+
+            # --- Обоснование LLM (Calculate this first to check for Deterministic status) ---
+            reasoning = ""
+            if hasattr(ship, 'llm_decision') and ship.llm_decision:
+                reasoning = ship.llm_decision.get('reasoning', '')
             
-            # Статус
+            if not reasoning and hasattr(ship, 'llm_reasoning'):
+                reasoning = ship.llm_reasoning
+            
+            if not reasoning:
+                if ship.in_maneuver:
+                    if ship.rudder_cmd > 0:
+                        reasoning = f"Turning starboard {ship.rudder_cmd:.0f}° to avoid collision"
+                    elif ship.rudder_cmd < 0:
+                        reasoning = f"Turning port {ship.rudder_cmd:.0f}° to avoid collision"
+                    else:
+                        reasoning = "Reducing speed for safety"
+                else:
+                    reasoning = "Maintaining course and speed - no collision risk"
+
+            # --- Статус (Now checks for Deterministic return) ---
             if ship.in_maneuver:
-                status = "MANEUVERING"
-                status_color = QColor(255, 200, 0)
+                if "Deterministic" in reasoning:
+                    status = "RETURN TO COURSE"
+                    status_color = QColor(135, 206, 250) # Light Sky Blue
+                else:
+                    status = "MANEUVERING"
+                    status_color = QColor(255, 200, 0) # Orange
             else:
                 status = "ON COURSE"
-                status_color = QColor(144, 238, 144)
+                status_color = QColor(144, 238, 144) # Green
             
             status_item = QTableWidgetItem(status)
             status_item.setBackground(status_color)
@@ -152,7 +175,7 @@ class LLMDecisionsWindow(QMainWindow):
 
 
 def launch_llm_decisions_window(ships_ref, llm_coordinator_ref=None):
-    """Запустить окно решений LLM"""
+    """Launch LLM window"""
     window = LLMDecisionsWindow(ships_ref, llm_coordinator_ref)
     window.show()
     return window

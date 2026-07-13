@@ -64,7 +64,7 @@ class ShipCanvas(FigureCanvas):
         self.mpl_connect('motion_notify_event', self.on_motion)
         self.mpl_connect('button_release_event', self.on_release)
         self.mpl_connect('scroll_event', self.on_scroll)
-
+        
         self.ships = []
         self.on_click_callback = None
         self.on_ship_click_callback = None
@@ -196,7 +196,7 @@ class ShipCanvas(FigureCanvas):
             bbox = self.ax.get_window_extent()
             if bbox.width == 0 or bbox.height == 0:
                 return
-
+            
             xlim = self.ax.get_xlim()
             ylim = self.ax.get_ylim()
             data_width = xlim[1] - xlim[0]
@@ -452,7 +452,7 @@ class ShipCanvas(FigureCanvas):
             self.ax.legend(handles=legend_elements, loc='upper right', fontsize=8,
                            framealpha=0.9)
 
-        # === ОТРИСОВКА СУДОВ ===
+        # === ОТРИСОВКА СУДОВ === (проверить 4 последнии лиинии кода, они были гитов отмечены)
         for ship in ships:
             track_x = []
             track_y = []
@@ -465,18 +465,19 @@ class ShipCanvas(FigureCanvas):
                 self.ax.plot(track_x, track_y, color=ship.color,
                              alpha=0.4, linewidth=1.5, linestyle='--', zorder=2)
 
+            
             vertices = ship.get_pentagon_vertices()
             pentagon = Polygon(vertices, closed=True, facecolor='black',
                                edgecolor='black', linewidth=1.5, alpha=0.95, zorder=5)
             self.ax.add_patch(pentagon)
-
+            
             if ship.llm_controlled:
                 rect = Rectangle((ship.x - 60, ship.y - 60), 120, 120,
                                  fill=False, edgecolor='gold', linewidth=3, zorder=4)
                 self.ax.add_patch(rect)
-
+            
             self.draw_velocity_vector(ship)
-
+            
             font_size = max(7, min(10, 1000 / self.view_scale * 10))
             llm_text = ship.get_llm_status_text()
             self.ax.text(ship.x + 80, ship.y + 80,
@@ -487,4 +488,5 @@ class ShipCanvas(FigureCanvas):
                          bbox=dict(boxstyle='round', facecolor='white',
                                    alpha=0.8, edgecolor='gray'))
 
-        self.draw()
+        
+        self.draw() #can be conflicting line
