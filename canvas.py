@@ -284,7 +284,8 @@ class ShipCanvas(FigureCanvas):
 
     def update_plot(self, ships, running, simulation_time,
                     use_miles=None, use_knots=None,
-                    predicted_tracks=None, routes=None):
+                    predicted_tracks=None, routes=None,
+                    ego_perspective=None):
         """
         Обновить график.
         """
@@ -341,7 +342,7 @@ class ShipCanvas(FigureCanvas):
 
         self.ax.grid(True, alpha=0.5)
 
-        # === ОТРИСОВКА МАРШРУТОВ ===
+        # === Routes ===
         for route in self.routes:
             if len(route.points) < 2:
                 continue
@@ -350,18 +351,18 @@ class ShipCanvas(FigureCanvas):
             route_x = [c[0] for c in coordinates]
             route_y = [c[1] for c in coordinates]
 
-            # Линия маршрута
+            # Route Line
             self.ax.plot(route_x, route_y,
                          color='blue', linewidth=2, linestyle='-',
                          alpha=0.6, zorder=2)
 
-            # Точки маршрута
+            # Route Points
             self.ax.plot(route_x, route_y,
                          marker='o', markersize=8,
                          color='blue', markeredgecolor='black',
                          markeredgewidth=1.5, zorder=3)
 
-            # Номера точек
+            # Route Point Numbers
             for point in route.points:
                 self.ax.text(point.x + 100, point.y + 100,
                              f"P{point.point_number}",
@@ -371,7 +372,7 @@ class ShipCanvas(FigureCanvas):
                                        alpha=0.8, edgecolor='blue'),
                              zorder=4)
 
-            # Название маршрута
+            # Route Names
             if route.points:
                 mid_x = np.mean(route_x)
                 mid_y = np.mean(route_y)
@@ -383,7 +384,7 @@ class ShipCanvas(FigureCanvas):
                                        alpha=0.7, edgecolor='darkblue'),
                              zorder=4)
 
-        # === ОТРИСОВКА ПРОГНОЗИРУЕМЫХ ТРЕКОВ ===
+        # === Predicted Trajectories ===
         for ship_name, track_data in self.predicted_tracks.items():
             role = track_data.get('role', 'unknown')
             pre_maneuver = track_data.get('pre_maneuver', [])
@@ -452,8 +453,22 @@ class ShipCanvas(FigureCanvas):
             self.ax.legend(handles=legend_elements, loc='upper right', fontsize=8,
                            framealpha=0.9)
 
-        # === ОТРИСОВКА СУДОВ === (проверить 4 последнии лиинии кода, они были гитов отмечены)
+        # === Draw Ships === (проверить 4 последнии лиинии кода, они были гитов отмечены)
         for ship in ships:
+            # Determine track rendering style based on perspective
+            is_selected_ego = (ego_perspective is not None and ship.name == ego_perspective.name)
+
+            # Get the pentagon vertices
+            vertices = ship.get_pentagon_vertices()
+            
+            # Highlight the active EGO ship differently than targets
+            face_color = 'darkblue' if is_selected_ego else 'black'
+            edge_color = 'gold' if is_selected_ego else 'black'
+            
+            pentagon = Polygon(vertices, closed=True, facecolor=face_color,
+                            edgecolor=edge_color, linewidth=2.0, alpha=0.95, zorder=5)
+            self.ax.add_patch(pentagon)
+            
             track_x = []
             track_y = []
             for hx, hy in zip(ship.history_x, ship.history_y):
@@ -471,6 +486,7 @@ class ShipCanvas(FigureCanvas):
                                edgecolor='black', linewidth=1.5, alpha=0.95, zorder=5)
             self.ax.add_patch(pentagon)
             
+            # Keep the AI controller indicator ring if applicable    
             if ship.llm_controlled:
                 rect = Rectangle((ship.x - 60, ship.y - 60), 120, 120,
                                  fill=False, edgecolor='gold', linewidth=3, zorder=4)
@@ -478,15 +494,35 @@ class ShipCanvas(FigureCanvas):
             
             self.draw_velocity_vector(ship)
             
+            # Dynamic Text block relative to current perspective view
             font_size = max(7, min(10, 1000 / self.view_scale * 10))
-            llm_text = ship.get_llm_status_text()
-            self.ax.text(ship.x + 80, ship.y + 80,
-                         f"{ship.name}\n{ship.get_heading_deg():.0f}°\n"
-                         f"{ship.u:.1f} m/s\n"
-                         f"R:{ship.rudder_cmd:.0f}° RPM:{ship.rpm_cmd:.0f}%{llm_text}",
-                         fontsize=font_size, ha='left', va='bottom',
-                         bbox=dict(boxstyle='round', facecolor='white',
-                                   alpha=0.8, edgecolor='gray'))
+
+            # If this ship is a target relative to our selected ego, look up the specific COLREG relationship
+            relativity_text = ""
+            if ego_perspective and not is_selected_ego:
+                # We look for decisions calculated by the target *or* look up pairs
+                # This is where your decentralized status string gets appended:
+                if hasattr(ego_perspective, 'llm_decision') and ego_perspective.llm_decision:
+                     # E.g., "Target is Give-Way to Ego"
+                     pass
+
+
+        llm_text = ship.get_llm_status_text()
+
+        # Append an explicit tag if it's the active viewer node
+        ego_tag = " [EGO]" if is_selected_ego else ""
+        
+        self.ax.text(ship.x + 80, ship.y + 80,
+                     f"{ship.name}{ego_tag}\n{ship.get_heading_deg():.0f}°\n"
+                     f"{ship.u:.1f} m/s\n"
+                     f"R:{ship.rudder_cmd:.0f}° RPM:{ship.rpm_cmd:.0f}%{llm_text}",
+                     fontsize=font_size, ha='left', va='bottom',
+                     bbox=dict(boxstyle='round', facecolor='white',
+                     alpha=0.8, edgecolor='darkblue' if is_selected_ego else 'gray'))           
+
+
+    
+        
+        self.draw()
 
         
-        self.draw() #can be conflicting line
