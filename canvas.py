@@ -339,8 +339,8 @@ class ShipCanvas(FigureCanvas):
             route_x = [c[0] for c in coordinates]
             route_y = [c[1] for c in coordinates]
 
-            self.ax.plot(route_x, route_y, color='blue', linewidth=2, linestyle='-', alpha=0.6, zorder=2)
-            self.ax.plot(route_x, route_y, marker='o', markersize=5, color='blue', markeredgecolor='black', markeredgewidth=1, linestyle='None', zorder=3)
+            self.ax.plot(route_x, route_y, color='blue', linewidth=1, linestyle='-', alpha=0.6, zorder=2)
+            self.ax.plot(route_x, route_y, marker='o', markersize=2, color='blue', markeredgecolor='black', markeredgewidth=1, linestyle='None', zorder=3)
 
             for point in route.points:
                 self.ax.text(point.x + 100, point.y + 100, f"P{point.point_number}", fontsize=9, fontweight='bold', color='blue',
