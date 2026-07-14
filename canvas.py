@@ -87,6 +87,10 @@ class ShipCanvas(FigureCanvas):
             )
 
     def _get_view_limits(self):
+        """
+        Calculates the x and y limits based on the actual window aspect ratio 
+        so Matplotlib doesn't have to guess or override them.
+        """
         bbox = self.ax.get_window_extent()
         if bbox.width == 0 or bbox.height == 0:
             return (-self.view_scale, self.view_scale,
@@ -95,6 +99,7 @@ class ShipCanvas(FigureCanvas):
         window_aspect = bbox.width / bbox.height
         base_range = self.view_scale
 
+        # Calculate limits manually so the aspect ratio is natively 1:1 
         if window_aspect > 1.0:
             x_range = base_range * window_aspect
             y_range = base_range
@@ -292,10 +297,13 @@ class ShipCanvas(FigureCanvas):
 
         self.ax.clear()
 
+        # Get calculated aspect-corrected view limits
         x_min, x_max, y_min, y_max = self._get_view_limits()
         self.ax.set_xlim(x_min, x_max)
         self.ax.set_ylim(y_min, y_max)
-        self.ax.set_aspect('equal')
+        
+        # Use box adjustment now that the view limits are pre-calculated for the aspect ratio
+        self.ax.set_aspect('equal', adjustable='datalim')
 
         self._apply_tick_style()
 

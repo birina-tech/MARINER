@@ -13,6 +13,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QMessageBox, QInputDialog, QMenu, QAction, QDialog)
 from PyQt5.QtCore import QTimer, Qt
 from PyQt5.QtGui import QCursor
+from PyQt5.QtWidgets import QSizePolicy
 from ship import Ship
 from canvas import ShipCanvas
 from dialogs import AddShipDialog, ControlDialog, LLMSettingsDialog
@@ -637,10 +638,13 @@ class MainWindow(QMainWindow):
         self.canvas.on_click_callback = self.on_empty_field_click
         self.canvas.on_ship_click_callback = self.on_ship_click
         self.canvas.on_mouse_move_callback = self.on_mouse_move
-        # Context menu callback for RMB on route points
         self.canvas.on_route_point_click_callback = self.on_route_point_right_click
-        # Click drag callback for LMB moving route points
         self.canvas.on_route_point_moved_callback = self.on_route_point_moved
+        
+        # Force the canvas size policy to expand aggressively
+        self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        
+        # Add the canvas to the main vertical layout with stretch=1 (takes all remaining space)
         main_layout.addWidget(self.canvas, stretch=1)
 
         self.statusBar().showMessage("Ready. Use the menus at the top.")
