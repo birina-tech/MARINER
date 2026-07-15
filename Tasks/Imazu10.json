@@ -1,0 +1,87 @@
+{
+  "vessels": [
+    {
+      "name": "Ship_1",
+      "x": 5028.505948084052,
+      "y": -28.052252163165576,
+      "course_deg": 0.0,
+      "speed_ms": 4.9901067999999995,
+      "rudder_deg": 0.0,
+      "rpm_percent": 50.0,
+      "llm_controlled": false,
+      "assigned_route": "Route_21"
+    },
+    {
+      "name": "Ship_2",
+      "x": 15024.847110012359,
+      "y": 9906.772964153275,
+      "course_deg": 270.0,
+      "speed_ms": 4.9901067999999995,
+      "rudder_deg": 0.0,
+      "rpm_percent": 50.0,
+      "llm_controlled": false,
+      "assigned_route": "Route_22"
+    },
+    {
+      "name": "Ship_3",
+      "x": 722.3897552533963,
+      "y": 1479.0884153275638,
+      "course_deg": 33.0,
+      "speed_ms": 4.9901067999999995,
+      "rudder_deg": 0.0,
+      "rpm_percent": 50.0,
+      "llm_controlled": false,
+      "assigned_route": "Route_23"
+    }
+  ],
+  "routes": [
+    {
+      "name": "Route_21",
+      "points": [
+        {
+          "x": 5023.094823238558,
+          "y": -1552.2806823238598,
+          "point_number": 1
+        },
+        {
+          "x": 4992.336850432626,
+          "y": 17732.96826699629,
+          "point_number": 2
+        }
+      ],
+      "assigned_ship": "Ship_1"
+    },
+    {
+      "name": "Route_22",
+      "points": [
+        {
+          "x": 17879.92745611866,
+          "y": 9889.68520148331,
+          "point_number": 1
+        },
+        {
+          "x": -7064.7884894932085,
+          "y": 9951.201147095177,
+          "point_number": 2
+        }
+      ],
+      "assigned_ship": "Ship_2"
+    },
+    {
+      "name": "Route_23",
+      "points": [
+        {
+          "x": -574.8562274412925,
+          "y": -537.2675797280626,
+          "point_number": 1
+        },
+        {
+          "x": 12989.409779975276,
+          "y": 18132.821913473425,
+          "point_number": 2
+        }
+      ],
+      "assigned_ship": "Ship_3"
+    }
+  ]
+}
