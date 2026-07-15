@@ -1491,19 +1491,35 @@ class MainWindow(QMainWindow):
                     if not worker_active:
                         ego_data = self.collect_ego_data(ship)
                             
-                        if ego_data:
-                            if ego_data['status'] == 'RETURN_TO_COURSE':
-                                heading_error = (ship.base_heading_deg - ship.get_heading_deg() + 180) % 360 - 180
-                                rudder = np.clip(1.5 * heading_error, -35.0, 35.0) 
-                                rpm = 50.0
+                        if ego_data['status'] == 'RETURN_TO_COURSE':
+                            heading_error = (ship.base_heading_deg - ship.get_heading_deg() + 180) % 360 - 180
+                            rudder = np.clip(1.5 * heading_error, -35.0, 35.0) 
+                            rpm = 50.0
+                            
+                            ship.apply_llm_command(rudder, rpm)
+                            
+                            # Extract the pure agent reasoning from the last valid decision if present
+                            agent_reason = ""
+                            if hasattr(ship, 'llm_decision') and isinstance(ship.llm_decision, dict):
+                                agent_reason = ship.llm_decision.get('reasoning', '')
+                            if not agent_reason and hasattr(ship, 'llm_reasoning'):
+                                # Strip old autopilot tags if re-entering the loop
+                                agent_reason = ship.llm_reasoning.replace("(Autopilot) ", "")
                                 
-                                ship.apply_llm_command(rudder, rpm)
-                                ship.llm_reasoning = "Collision avoided. Returning to course."
-                                ship.llm_decision = {"rudder_deg": float(rudder), "rpm_percent": float(rpm), "reasoning": ship.llm_reasoning}
+                            if not agent_reason:
+                                agent_reason = "Collision avoided."
                                 
-                                if abs(heading_error) <= 1.0:
-                                    ship.apply_llm_command(0.0, rpm)
-                                    ship.in_maneuver = False
+                            # Format according to requirements
+                            ship.llm_reasoning = f"(Autopilot) {agent_reason}"
+                            ship.llm_decision = {"rudder_deg": float(rudder), "rpm_percent": float(rpm), "reasoning": ship.llm_reasoning}
+                            
+                            # Use a clear state marker instead of relying on string matching
+                            ship.status_state = "RESUME_COURSE"
+                            
+                            if abs(heading_error) <= 1.0:
+                                ship.apply_llm_command(0.0, rpm)
+                                ship.in_maneuver = False
+                                ship.status_state = "ON_COURSE"
                             else:
                                 worker = LLMWorker(coordinator, ship.name, ego_data)
                                 worker.result_ready.connect(self.on_llm_result)
@@ -1528,6 +1544,10 @@ class MainWindow(QMainWindow):
                 heading_diff = abs((ship.base_heading_deg - ship.get_heading_deg() + 180) % 360 - 180)
                 if heading_diff > 1:
                     ship.in_maneuver = True
+                else:
+                    # If variance falls within bounds and it's not maneuvering, it's firmly back on track
+                    if not getattr(ship, 'status_state', None) == "RESUME_COURSE":
+                        ship.status_state = "ON_COURSE"
                     
                 ship.update(self.dt)
                 self.log_ship_state(ship)

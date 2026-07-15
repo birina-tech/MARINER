@@ -1,6 +1,6 @@
 """
 llm_decisions_window.py
-GUI that render and update LLM desicion making process
+GUI that renders and updates the LLM decision-making process
 """
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QPushButton, QLabel, QTableWidget, QTableWidgetItem,
@@ -72,7 +72,7 @@ class LLMDecisionsWindow(QMainWindow):
         layout.addWidget(btn_close)
     
     def update_table(self):
-        """Обновить таблицу решений LLM"""
+        """Update the LLM decisions table"""
         ships = self.ships_ref() if callable(self.ships_ref) else self.ships_ref
         
         if len(ships) == 0:
@@ -88,12 +88,12 @@ class LLMDecisionsWindow(QMainWindow):
             
             self.table.insertRow(row)
             
-            # Имя судна
+            # Vessel name
             name_item = QTableWidgetItem(ship.name)
             name_item.setFont(QFont("Arial", 10, QFont.Bold))
             self.table.setItem(row, 0, name_item)
 
-            # --- Обоснование LLM (Calculate this first to check for Deterministic status) ---
+            # --- Reasoning LLM (Calculate this first to check for Deterministic status) ---
             reasoning = ""
             if hasattr(ship, 'llm_decision') and ship.llm_decision:
                 reasoning = ship.llm_decision.get('reasoning', '')
@@ -104,22 +104,24 @@ class LLMDecisionsWindow(QMainWindow):
             if not reasoning:
                 if ship.in_maneuver:
                     if ship.rudder_cmd > 0:
-                        reasoning = f"Turning starboard {ship.rudder_cmd:.0f}° to avoid collision"
+                        reasoning = f"Turning starboard {ship.rudder_cmd:.0f}\u00b0 to avoid collision"
                     elif ship.rudder_cmd < 0:
-                        reasoning = f"Turning port {ship.rudder_cmd:.0f}° to avoid collision"
+                        reasoning = f"Turning port {ship.rudder_cmd:.0f}\u00b0 to avoid collision"
                     else:
                         reasoning = "Reducing speed for safety"
                 else:
                     reasoning = "Maintaining course and speed - no collision risk"
 
-            # --- Статус (Now checks for Deterministic return) ---
-            if ship.in_maneuver:
-                if "Deterministic" in reasoning:
-                    status = "RETURN TO COURSE"
-                    status_color = QColor(135, 206, 250) # Light Sky Blue
-                else:
-                    status = "MANEUVERING"
-                    status_color = QColor(255, 200, 0) # Orange
+            # --- Status (Now checks for Deterministic return) ---
+            # Determine status based on explicit structural states
+            ship_state = getattr(ship, 'status_state', 'ON_COURSE')
+
+            if ship_state == "RESUME_COURSE" and ship.in_maneuver:
+                status = "Resume Course"
+                status_color = QColor(135, 206, 250) # Light Sky Blue
+            elif ship.in_maneuver:
+                status = "MANEUVERING"
+                status_color = QColor(255, 200, 0) # Orange
             else:
                 status = "ON COURSE"
                 status_color = QColor(144, 238, 144) # Green
@@ -128,8 +130,8 @@ class LLMDecisionsWindow(QMainWindow):
             status_item.setBackground(status_color)
             self.table.setItem(row, 1, status_item)
             
-            # Руль
-            rudder_item = QTableWidgetItem(f"{ship.rudder_cmd:.1f}°")
+            # Rudder
+            rudder_item = QTableWidgetItem(f"{ship.rudder_cmd:.1f}\u00b0")
             if abs(ship.rudder_cmd) > 15:
                 rudder_item.setBackground(QColor(255, 150, 150))
             self.table.setItem(row, 2, rudder_item)
@@ -140,7 +142,7 @@ class LLMDecisionsWindow(QMainWindow):
                 rpm_item.setBackground(QColor(255, 200, 150))
             self.table.setItem(row, 3, rpm_item)
             
-            # Обоснование LLM - ИСПРАВЛЕНО
+            # LLM Reasoning - FIXED
             reasoning = ""
             if hasattr(ship, 'llm_decision') and ship.llm_decision:
                 reasoning = ship.llm_decision.get('reasoning', '')
@@ -149,12 +151,12 @@ class LLMDecisionsWindow(QMainWindow):
                 reasoning = ship.llm_reasoning
             
             if not reasoning:
-                # Генерируем обоснование на основе статуса
+                # Generate reasoning based on the status
                 if ship.in_maneuver:
                     if ship.rudder_cmd > 0:
-                        reasoning = f"Turning starboard {ship.rudder_cmd:.0f}° to avoid collision"
+                        reasoning = f"Turning starboard {ship.rudder_cmd:.0f}\u00b0 to avoid collision"
                     elif ship.rudder_cmd < 0:
-                        reasoning = f"Turning port {ship.rudder_cmd:.0f}° to avoid collision"
+                        reasoning = f"Turning port {ship.rudder_cmd:.0f}\u00b0 to avoid collision"
                     else:
                         reasoning = "Reducing speed for safety"
                 else:
