@@ -1,16 +1,16 @@
 """
 llm_decisions_window.py
-GUI that renders and updates the LLM decision-making process
+Окно отображения решений LLM по управлению судами
 """
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
                              QPushButton, QLabel, QTableWidget, QTableWidgetItem,
                              QHeaderView, QScrollArea, QGroupBox)
 from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QColor, QFont  
+from PyQt5.QtGui import QColor, QFont  # ДОБАВЛЕН QFont
 
 
 class LLMDecisionsWindow(QMainWindow):
-    """LLM Window"""
+    """Окно отображения решений LLM"""
     
     def __init__(self, ships_ref, llm_coordinator_ref=None):
         super().__init__()
@@ -24,7 +24,7 @@ class LLMDecisionsWindow(QMainWindow):
         
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_table)
-        self.timer.start(1000)  # Update every second
+        self.timer.start(1000)  # Обновление каждую секунду
         
         self.update_table()
     
@@ -33,19 +33,19 @@ class LLMDecisionsWindow(QMainWindow):
         self.setCentralWidget(central_widget)
         layout = QVBoxLayout(central_widget)
         
-        # Heading
+        # Заголовок
         title_label = QLabel("LLM Control Decisions & Reasoning")
         title_label.setStyleSheet("font-size: 16px; font-weight: bold; padding: 10px; background-color: #e3f2fd;")
         title_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(title_label)
         
-        # Scroll area 
+        # Создаём scroll area для таблицы
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         
-        # Table
+        # Таблица
         self.table = QTableWidget()
         self.table.setColumnCount(5)
         self.table.setHorizontalHeaderLabels([
@@ -66,13 +66,13 @@ class LLMDecisionsWindow(QMainWindow):
         scroll.setWidget(self.table)
         layout.addWidget(scroll)
         
-        # Close button
+        # Кнопка закрытия
         btn_close = QPushButton("Close window")
         btn_close.clicked.connect(self.close)
         layout.addWidget(btn_close)
     
     def update_table(self):
-        """Update the LLM decisions table"""
+        """Обновить таблицу решений LLM"""
         ships = self.ships_ref() if callable(self.ships_ref) else self.ships_ref
         
         if len(ships) == 0:
@@ -88,50 +88,25 @@ class LLMDecisionsWindow(QMainWindow):
             
             self.table.insertRow(row)
             
-            # Vessel name
+            # Имя судна
             name_item = QTableWidgetItem(ship.name)
             name_item.setFont(QFont("Arial", 10, QFont.Bold))
             self.table.setItem(row, 0, name_item)
-
-            # --- Reasoning LLM (Calculate this first to check for Deterministic status) ---
-            reasoning = ""
-            if hasattr(ship, 'llm_decision') and ship.llm_decision:
-                reasoning = ship.llm_decision.get('reasoning', '')
             
-            if not reasoning and hasattr(ship, 'llm_reasoning'):
-                reasoning = ship.llm_reasoning
-            
-            if not reasoning:
-                if ship.in_maneuver:
-                    if ship.rudder_cmd > 0:
-                        reasoning = f"Turning starboard {ship.rudder_cmd:.0f}\u00b0 to avoid collision"
-                    elif ship.rudder_cmd < 0:
-                        reasoning = f"Turning port {ship.rudder_cmd:.0f}\u00b0 to avoid collision"
-                    else:
-                        reasoning = "Reducing speed for safety"
-                else:
-                    reasoning = "Maintaining course and speed - no collision risk"
-
-            # --- Status (Now checks for Deterministic return) ---
-            # Determine status based on explicit structural states
-            ship_state = getattr(ship, 'status_state', 'ON_COURSE')
-
-            if ship_state == "RESUME_COURSE" and ship.in_maneuver:
-                status = "Resume Course"
-                status_color = QColor(135, 206, 250) # Light Sky Blue
-            elif ship.in_maneuver:
+            # Статус
+            if ship.in_maneuver:
                 status = "MANEUVERING"
-                status_color = QColor(255, 200, 0) # Orange
+                status_color = QColor(255, 200, 0)
             else:
                 status = "ON COURSE"
-                status_color = QColor(144, 238, 144) # Green
+                status_color = QColor(144, 238, 144)
             
             status_item = QTableWidgetItem(status)
             status_item.setBackground(status_color)
             self.table.setItem(row, 1, status_item)
             
-            # Rudder
-            rudder_item = QTableWidgetItem(f"{ship.rudder_cmd:.1f}\u00b0")
+            # Руль
+            rudder_item = QTableWidgetItem(f"{ship.rudder_cmd:.1f}°")
             if abs(ship.rudder_cmd) > 15:
                 rudder_item.setBackground(QColor(255, 150, 150))
             self.table.setItem(row, 2, rudder_item)
@@ -142,7 +117,7 @@ class LLMDecisionsWindow(QMainWindow):
                 rpm_item.setBackground(QColor(255, 200, 150))
             self.table.setItem(row, 3, rpm_item)
             
-            # LLM Reasoning - FIXED
+            # Обоснование LLM - ИСПРАВЛЕНО
             reasoning = ""
             if hasattr(ship, 'llm_decision') and ship.llm_decision:
                 reasoning = ship.llm_decision.get('reasoning', '')
@@ -151,12 +126,12 @@ class LLMDecisionsWindow(QMainWindow):
                 reasoning = ship.llm_reasoning
             
             if not reasoning:
-                # Generate reasoning based on the status
+                # Генерируем обоснование на основе статуса
                 if ship.in_maneuver:
                     if ship.rudder_cmd > 0:
-                        reasoning = f"Turning starboard {ship.rudder_cmd:.0f}\u00b0 to avoid collision"
+                        reasoning = f"Turning starboard {ship.rudder_cmd:.0f}° to avoid collision"
                     elif ship.rudder_cmd < 0:
-                        reasoning = f"Turning port {ship.rudder_cmd:.0f}\u00b0 to avoid collision"
+                        reasoning = f"Turning port {ship.rudder_cmd:.0f}° to avoid collision"
                     else:
                         reasoning = "Reducing speed for safety"
                 else:
@@ -177,7 +152,7 @@ class LLMDecisionsWindow(QMainWindow):
 
 
 def launch_llm_decisions_window(ships_ref, llm_coordinator_ref=None):
-    """Launch LLM window"""
+    """Запустить окно решений LLM"""
     window = LLMDecisionsWindow(ships_ref, llm_coordinator_ref)
     window.show()
     return window

@@ -1,18 +1,19 @@
 """
 dialogs.py
-Dialog windows for the simulator.
+Диалоговые окна для симулятора
 """
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                              QLineEdit, QPushButton, QComboBox, QDoubleSpinBox,
-                             QCheckBox, QGroupBox, QFormLayout, QSlider)
+                             QSpinBox, QCheckBox, QGroupBox, QFormLayout,
+                             QSlider)
 from PyQt5.QtCore import Qt, QTimer
 
-# Conversion Constants
+# Константы конвертации
 KNOTS_TO_MS = 0.514444
 
 
 class AddShipDialog(QDialog):
-    """Dialog interface for adding a new vessel to the simulation."""
+    """Диалог добавления судна"""
     
     def __init__(self, x, y, parent=None, default_course=0, default_speed=5.0, 
                  default_name=None, use_knots=True):
@@ -41,7 +42,7 @@ class AddShipDialog(QDialog):
         self.course_input.setRange(0, 359)
         self.course_input.setValue(default_course)
         self.course_input.setDecimals(0)
-        self.course_input.setSuffix("\u00b0")
+        self.course_input.setSuffix("°")
         form_layout.addRow("Course:", self.course_input)
         
         self.speed_input = QDoubleSpinBox()
@@ -91,7 +92,7 @@ class AddShipDialog(QDialog):
 
 
 class ControlDialog(QDialog):
-    """Vessel manual control panel containing a real-time tracking update thread."""
+    """Диалог управления судном с автообновлением информации"""
     
     def __init__(self, ship, parent=None, use_knots=True):
         super().__init__(parent)
@@ -103,7 +104,7 @@ class ControlDialog(QDialog):
         
         layout = QVBoxLayout()
         
-        # === Vessel Information Panel (Updates in real time) ===
+        # === Блок информации о судне (обновляется в реальном времени) ===
         self.info_group = QGroupBox("Vessel Information (live)")
         self.info_layout = QFormLayout()
         
@@ -116,29 +117,31 @@ class ControlDialog(QDialog):
         else:
             self.speed_label = QLabel(f"{ship.u:.2f} m/s")
         
-        self.course_label = QLabel(f"{ship.get_heading_deg():.1f}\u00b0")
-        self.rot_label = QLabel(f"{ship.get_rot():+.1f}\u00b0/min" if hasattr(ship, 'get_rot') else "N/A")
+        self.course_label = QLabel(f"{ship.get_heading_deg():.1f}°")
+        self.rot_label = QLabel(f"{ship.get_rot():+.1f}°/min" if hasattr(ship, 'get_rot') else "N/A")
+        self.info_layout.addRow("ROT:", self.rot_label)
         
         self.info_layout.addRow("Name:", self.name_label)
         self.info_layout.addRow("Position:", self.position_label)
         self.info_layout.addRow("Speed:", self.speed_label)
         self.info_layout.addRow("Course:", self.course_label)
-        self.info_layout.addRow("ROT:", self.rot_label)
         
         self.info_group.setLayout(self.info_layout)
         layout.addWidget(self.info_group)
         
-        # === Manual Control Input Sliders ===
+        # === Управление с ползунками ===
         control_group = QGroupBox("Manual Control (set desired values)")
         control_layout = QVBoxLayout()
         
-        # --- RUDDER ---
+        # --- РУЛЬ ---
         rudder_layout = QVBoxLayout()
         
-        self.rudder_current_label = QLabel(f"Current: {ship.rudder_cmd:.0f}\u00b0")
+        # Метка "текущее значение"
+        self.rudder_current_label = QLabel(f"Current: {ship.rudder_cmd:.0f}°")
         self.rudder_current_label.setStyleSheet("color: gray; font-style: italic;")
         rudder_layout.addWidget(self.rudder_current_label)
         
+        # Ползунок + значение
         rudder_row = QHBoxLayout()
         rudder_label = QLabel("Desired rudder:")
         rudder_label.setFixedWidth(120)
@@ -149,7 +152,7 @@ class ControlDialog(QDialog):
         self.rudder_slider.setTickPosition(QSlider.TicksBelow)
         self.rudder_slider.setTickInterval(5)
         
-        self.rudder_value_label = QLabel(f"{ship.rudder_cmd:.0f}\u00b0")
+        self.rudder_value_label = QLabel(f"{ship.rudder_cmd:.0f}°")
         self.rudder_value_label.setFixedWidth(50)
         self.rudder_value_label.setAlignment(Qt.AlignCenter)
         self.rudder_value_label.setStyleSheet("font-weight: bold;")
@@ -166,10 +169,12 @@ class ControlDialog(QDialog):
         # --- RPM ---
         rpm_layout = QVBoxLayout()
         
+        # Метка "текущее значение"
         self.rpm_current_label = QLabel(f"Current: {ship.rpm_cmd:.0f}%")
         self.rpm_current_label.setStyleSheet("color: gray; font-style: italic;")
         rpm_layout.addWidget(self.rpm_current_label)
         
+        # Ползунок + значение
         rpm_row = QHBoxLayout()
         rpm_label = QLabel("Desired RPM:")
         rpm_label.setFixedWidth(120)
@@ -197,7 +202,7 @@ class ControlDialog(QDialog):
         control_group.setLayout(control_layout)
         layout.addWidget(control_group)
         
-        # === AI Control Block ===
+        # === LLM управление ===
         llm_group = QGroupBox("AI Control")
         llm_layout = QVBoxLayout()
         
@@ -208,7 +213,7 @@ class ControlDialog(QDialog):
         llm_group.setLayout(llm_layout)
         layout.addWidget(llm_group)
         
-        # Action Buttons
+        # Кнопки
         button_layout = QHBoxLayout()
         
         btn_apply = QPushButton("Apply")
@@ -222,52 +227,60 @@ class ControlDialog(QDialog):
         layout.addLayout(button_layout)
         self.setLayout(layout)
         
-        # === Live Telemetry Data Refresh Timer Thread ===
-        # Refreshes positional text labels continuously without modifying slide intents
+        # === ТАЙМЕР ОБНОВЛЕНИЯ ИНФОРМАЦИИ ===
+        # Обновляет только метки "Current:" и блок информации, НЕ ползунки
         self.update_timer = QTimer(self)
         self.update_timer.timeout.connect(self.refresh_ship_info)
         self.update_timer.start(500)
     
     def refresh_ship_info(self):
-        """Update data panels dynamically while preserving manual user slide intentions."""
+        """Обновить только информационные метки, НЕ ползунки"""
+        # Позиция
         self.position_label.setText(f"X={self.ship.x:.0f} m, Y={self.ship.y:.0f} m")
         
+        # Скорость
         if self.use_knots:
             speed_kn = self.ship.u / KNOTS_TO_MS
             self.speed_label.setText(f"{speed_kn:.1f} kn ({self.ship.u:.2f} m/s)")
         else:
             self.speed_label.setText(f"{self.ship.u:.2f} m/s")
         
-        self.course_label.setText(f"{self.ship.get_heading_deg():.1f}\u00b0")
-        if hasattr(self.ship, 'get_rot'):
-            self.rot_label.setText(f"{self.ship.get_rot():+.1f}\u00b0/min")
+        # Курс
+        self.course_label.setText(f"{self.ship.get_heading_deg():.1f}°")
+        self.rot_label.setText(f"{self.ship.get_rot():+.1f}°/min")
         
-        self.rudder_current_label.setText(f"Current: {self.ship.rudder_cmd:.0f}\u00b0")
+        # Обновляем только метки "Current:" рядом с ползунками
+        self.rudder_current_label.setText(f"Current: {self.ship.rudder_cmd:.0f}°")
         self.rpm_current_label.setText(f"Current: {self.ship.rpm_cmd:.0f}%")
+        
+        # ПОЛЗУНКИ НЕ ОБНОВЛЯЮТСЯ — они представляют намерение пользователя
     
     def update_rudder_label(self, value):
-        self.rudder_value_label.setText(f"{value}\u00b0")
+        self.rudder_value_label.setText(f"{value}°")
     
     def update_rpm_label(self, value):
         self.rpm_value_label.setText(f"{value}%")
     
     def apply_changes(self):
-        """Commit structural sliders state attributes directly to ship kinematics model."""
+        """Применить значения ползунков к судну"""
         self.ship.rudder_cmd = float(self.rudder_slider.value())
         self.ship.rpm_cmd = float(self.rpm_slider.value())
         self.ship.llm_controlled = self.llm_checkbox.isChecked()
         
-        self.rudder_current_label.setText(f"Current: {self.rudder_slider.value():.0f}\u00b0")
+        # После применения синхронизируем метки "Current:" с ползунками
+        self.rudder_current_label.setText(f"Current: {self.rudder_slider.value():.0f}°")
         self.rpm_current_label.setText(f"Current: {self.rpm_slider.value():.0f}%")
     
     def closeEvent(self, event):
-        """Gracefully close background timer threads upon window dismissal."""
+        self.update_timer.stop()
+        super().closeEvent(event)
+        """Остановить таймер при закрытии окна"""
         self.update_timer.stop()
         super().closeEvent(event)
 
 
 class LLMSettingsDialog(QDialog):
-    """Orchestration layout properties configuration panel for LiteLLM coordinators."""
+    """Диалог настроек LLM"""
     
     def __init__(self, current_provider, api_keys, parent=None):
         super().__init__(parent)
@@ -282,7 +295,6 @@ class LLMSettingsDialog(QDialog):
         provider_layout = QFormLayout()
         
         self.provider_combo = QComboBox()
-        # Step 2: Automatically maps newly integrated providers dynamically
         for key, config in LLMCoordinator.PROVIDERS.items():
             self.provider_combo.addItem(config['name'], key)
         
@@ -326,13 +338,6 @@ class LLMSettingsDialog(QDialog):
         provider = self.provider_combo.currentData()
         key = self.key_input.text().strip()
         
-        # Access the main window's existing keys dictionary to update it rather than overwriting
-        parent = self.parent()
-        current_keys = getattr(parent, 'api_keys', {}).copy() if parent else {}
+        api_keys = {provider: key} if key else {}
         
-        if key:
-            current_keys[provider] = key
-        else:
-            current_keys.pop(provider, None)
-            
-        return provider, current_keys
+        return provider, api_keys

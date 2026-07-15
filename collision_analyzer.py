@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QColor
 from colreg_rules import determine_colreg_situation, calculate_relative_bearing
-
+from safe_passing_dialog import SafePassingDialog
 
 
 class CollisionAnalyzer:
@@ -183,7 +183,7 @@ class CollisionAnalysisWindow(QMainWindow):
     def calculate_all_maneuvers(self):
         try:
             from safe_passing_dialog import SafePassingDialog
-            ships = self._get_ships()  
+            ships = self._get_ships()  # ← ИСПРАВЛЕНО
             if len(ships) < 2:
                 QMessageBox.warning(
                     self, "Not enough vessels",
