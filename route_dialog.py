@@ -53,7 +53,7 @@ class RouteDialog(QDialog):
         self.table = QTableWidget()
         self.table.setColumnCount(6)
         self.table.setHorizontalHeaderLabels([
-            "Point #", "Distance (m)", "Course (°)",
+            "Point #", "Distance (m)", "Course (\u00b0)",
             "X (m)", "Y (m)", "Assigned Vessel"
         ])
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
@@ -123,7 +123,7 @@ class RouteDialog(QDialog):
 
             self.table.setItem(row, 0, QTableWidgetItem(str(point.point_number)))
             self.table.setItem(row, 1, QTableWidgetItem(f"{point.distance_to_next:.0f}"))
-            self.table.setItem(row, 2, QTableWidgetItem(f"{point.course_to_next:.1f}°"))
+            self.table.setItem(row, 2, QTableWidgetItem(f"{point.course_to_next:.1f}\u00b0"))
             self.table.setItem(row, 3, QTableWidgetItem(f"{point.x:.0f}"))
             self.table.setItem(row, 4, QTableWidgetItem(f"{point.y:.0f}"))
 

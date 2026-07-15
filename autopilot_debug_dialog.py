@@ -118,7 +118,7 @@ class AutopilotDebugDialog(QDialog):
         if mode == "HOLD":
             self.lbl_mode.setStyleSheet("font-weight: bold; color: #FF6600;")
             hold_course = info.get('hold_course')
-            self.lbl_hold_course.setText(f"{hold_course:.1f}°" if hold_course else "-")
+            self.lbl_hold_course.setText(f"{hold_course:.1f}\u00b0" if hold_course else "-")
         else:
             self.lbl_mode.setStyleSheet("font-weight: bold; color: #006600;")
             self.lbl_hold_course.setText("-")
@@ -131,7 +131,7 @@ class AutopilotDebugDialog(QDialog):
         turn_dist = info.get('turn_distance', 0.0)
         turn_angle = info.get('turn_angle', 0.0)
         if turn_dist > 0:
-            self.lbl_threshold.setText(f"{turn_dist:.0f} m (angle {turn_angle:.0f}°)")
+            self.lbl_threshold.setText(f"{turn_dist:.0f} m (angle {turn_angle:.0f}\u00b0)")
         else:
             self.lbl_threshold.setText("Last leg (no turn)")
 
@@ -142,10 +142,10 @@ class AutopilotDebugDialog(QDialog):
             self.lbl_d2.setStyleSheet("")
 
         # Курсы
-        self.lbl_course_on_leg.setText(f"{info.get('course_on_leg', 0):.1f}°")
+        self.lbl_course_on_leg.setText(f"{info.get('course_on_leg', 0):.1f}\u00b0")
 
         correction = info.get('course_correction', 0.0)
-        self.lbl_correction.setText(f"{correction:+.2f}°")
+        self.lbl_correction.setText(f"{correction:+.2f}\u00b0")
         if abs(correction) > 10:
             self.lbl_correction.setStyleSheet("font-weight: bold; color: #FF0000;")
         else:
@@ -153,7 +153,7 @@ class AutopilotDebugDialog(QDialog):
 
         # Руль
         rudder = info.get('rudder_cmd', 0.0)
-        self.lbl_rudder.setText(f"{rudder:+.1f}°")
+        self.lbl_rudder.setText(f"{rudder:+.1f}\u00b0")
 
     def closeEvent(self, event):
         self.timer.stop()

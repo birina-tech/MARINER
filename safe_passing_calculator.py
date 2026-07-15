@@ -66,7 +66,7 @@ class SafePassingCalculator:
                     'achieved_dcpa_m': test_dcpa,
                     'is_valid': True,
                     'method': 'starboard_turn',
-                    'message': f'Safe course found: turn {angle:.0f}° starboard'
+                    'message': f'Safe course found: turn {angle:.0f}\u00b0 starboard'
                 }
         
         # === ШАГ 2: Справа не нашли — ищем СЛЕВА (port) ===
@@ -87,7 +87,7 @@ class SafePassingCalculator:
                     'achieved_dcpa_m': test_dcpa,
                     'is_valid': True,
                     'method': 'port_turn',
-                    'message': f'Safe course found: turn {abs(angle):.0f}° port (starboard not sufficient)'
+                    'message': f'Safe course found: turn {abs(angle):.0f}\u00b0 port (starboard not sufficient)'
                 }
         
         # === ШАГ 3: Не нашли ни справа, ни слева ===
@@ -121,7 +121,7 @@ class SafePassingCalculator:
             'achieved_dcpa_m': best_dcpa,
             'is_valid': False,
             'method': 'best_effort',
-            'message': f'No safe course within ±{self.max_turn_angle_deg}°. Best DCPA: {best_dcpa:.0f} m'
+            'message': f'No safe course within ±{self.max_turn_angle_deg}\u00b0. Best DCPA: {best_dcpa:.0f} m'
         }
     
     def calculate_maneuver_timing(self, give_way_ship, stand_on_ship,
@@ -313,7 +313,7 @@ class SafePassingCalculator:
             'medium': 'soon'
         }.get(urgency, '')
         
-        return (f"Turn {abs(turn):.0f}° to {direction} {urgency_text}. "
+        return (f"Turn {abs(turn):.0f}\u00b0 to {direction} {urgency_text}. "
                 f"Expected DCPA: {course_result['achieved_dcpa_m']:.0f} m")
     
     def _calculate_dcpa_for_course(self, give_way_ship, stand_on_ship, course_deg):

@@ -63,7 +63,7 @@ class MainWindow(QMainWindow):
         self.use_miles = True
         self.use_knots = True
 
-        self.selected_ego_ship = None # Tracks whose perspective we are viewing
+        self.selected_ego_ship = None  # Tracks whose perspective we are viewing
 
         self.init_menu()
         self.init_ui()
@@ -247,8 +247,6 @@ class MainWindow(QMainWindow):
     def get_or_create_coordinator(self):
         """Fetches or instantiates a fresh coordinator with current environment keys."""
         api_key = self.api_keys.get(self.current_provider)
-        
-        # Reconstruct the coordinator every time to securely sync OS environment variables
         self.llm_coordinator = LLMCoordinator(
             provider=self.current_provider, 
             api_key=api_key
@@ -605,7 +603,6 @@ class MainWindow(QMainWindow):
         self.btn_llm_decisions.setFixedHeight(40)
         self.btn_llm_decisions.clicked.connect(self.open_llm_decisions)
 
-        # Route creation button
         self.btn_create_route = QPushButton("🛤 Create Route")
         self.btn_create_route.setStyleSheet("""
             QPushButton {
@@ -641,10 +638,7 @@ class MainWindow(QMainWindow):
         self.canvas.on_route_point_click_callback = self.on_route_point_right_click
         self.canvas.on_route_point_moved_callback = self.on_route_point_moved
         
-        # Force the canvas size policy to expand aggressively
         self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        
-        # Add the canvas to the main vertical layout with stretch=1 (takes all remaining space)
         main_layout.addWidget(self.canvas, stretch=1)
 
         self.statusBar().showMessage("Ready. Use the menus at the top.")
@@ -663,11 +657,9 @@ class MainWindow(QMainWindow):
         self.route_mode = not self.route_mode
 
         if self.route_mode:
-            # Generate new configuration container
             self.current_route = Route()
             self.routes.append(self.current_route)
 
-            # Instatiate non-modal orchestration dialog
             self.route_dialog = RouteDialog(self.current_route, self.ships, self, is_editing=False)
             self.route_dialog.show()
             self.route_dialog.route_updated.connect(self.on_route_dialog_closed)
@@ -692,7 +684,6 @@ class MainWindow(QMainWindow):
         """Triggered upon route dialog interface dismissal."""
         self.route_mode = False
 
-        # If layout remains incomplete (under 2 waypoints), scrap the route
         if self.current_route and len(self.current_route.points) < 2:
             if self.current_route in self.routes:
                 self.routes.remove(self.current_route)
@@ -931,7 +922,7 @@ class MainWindow(QMainWindow):
                 speed_text = format_speed(speed, self.use_knots)
                 self.statusBar().showMessage(
                     f"Added: {ship.name} | ({x:.0f}, {y:.0f}) | "
-                    f"Course: {course}° | Speed: {speed_text}")
+                    f"Course: {course}\u00b0 | Speed: {speed_text}")
                 self.update_rec_button_state()
                 self.canvas.update_plot(
                     self.ships, self.running, self.simulation_time,
@@ -947,7 +938,6 @@ class MainWindow(QMainWindow):
         if self.move_mode:
             self.cancel_move_ship()
 
-        # Set the clicked ship as the primary ego perspective for the UI
         self.selected_ego_ship = ship
         self.statusBar().showMessage(f"Active perspective switched to: {ship.name}")
 
@@ -962,7 +952,6 @@ class MainWindow(QMainWindow):
         action_options.triggered.connect(lambda: self.open_ship_options(ship))
         menu.addAction(action_options)
 
-        # === Autopilot Debug ===
         action_autopilot = QAction("🤖 Autopilot", self)
         action_autopilot.triggered.connect(lambda: self.open_autopilot_debug(ship))
         menu.addAction(action_autopilot)
@@ -1028,7 +1017,7 @@ class MainWindow(QMainWindow):
                 speed_text = format_speed(speed, self.use_knots)
                 self.statusBar().showMessage(
                     f"Moved: {new_ship.name} | ({x:.0f}, {y:.0f}) | "
-                    f"Course: {course}° | Speed: {speed_text}")
+                    f"Course: {course}\u00b0 | Speed: {speed_text}")
         else:
             self.ships.append(ship)
             self.statusBar().showMessage(f"Move cancelled: {ship.name} remains at original position")
@@ -1071,7 +1060,7 @@ class MainWindow(QMainWindow):
         dialog.exec_()
         llm_status = "LLM enabled" if ship.llm_controlled else "Manual control"
         self.statusBar().showMessage(
-            f"{ship.name}: {llm_status} | Rudder={ship.rudder_cmd}°, RPM={ship.rpm_cmd}%")
+            f"{ship.name}: {llm_status} | Rudder={ship.rudder_cmd}\u00b0, RPM={ship.rpm_cmd}%")
         self.canvas.update_plot(
             self.ships, self.running, self.simulation_time,
             use_miles=self.use_miles, use_knots=self.use_knots,
@@ -1238,71 +1227,6 @@ class MainWindow(QMainWindow):
             routes=self.routes,
             ego_perspective=self.selected_ego_ship
         )
-    '''
-    def collect_collision_data(self):
-        from colreg_rules import determine_colreg_situation
-        from collision_analyzer import CollisionAnalyzer
-        analyzer = CollisionAnalyzer()
-        ship_data_list = []
-        
-        for ship in self.ships:
-            pairs_info = []
-            must_yield = False
-            for other in self.ships:
-                if other is ship: continue
-                cpa = analyzer.calculate_cpa_tcpa(ship, other)
-                colreg = determine_colreg_situation(ship, other, cpa['dist'], cpa['DCPA'], cpa['TCPA'])
-                action = colreg['ship1_action']
-                if 'Give-way' in action or 'Alter' in action: must_yield = True
-                
-                pairs_info.append({
-                    'other_ship': other.name,
-                    'rule': colreg['rule'],
-                    'cpa_m': float(cpa['DCPA']),
-                    'tcpa_s': float(cpa['TCPA']) if cpa['TCPA'] != float('inf') else 99999.0
-                })
-                
-            status = 'MUST_YIELD' if must_yield else 'HOLD_COURSE'
-            
-            # Autopilot telemetry verification and cross track error estimations
-            ap_enabled = getattr(ship, 'autopilot_enabled', False)
-            dist_to_route = None
-            if ap_enabled and getattr(ship, 'assigned_route', None):
-                pts = ship.assigned_route.points
-                if len(pts) >= 2:
-                    sx, sy = np.array([ship.x, ship.y])
-                    min_d = float('inf')
-                    for i in range(len(pts)-1):
-                        p1 = np.array([pts[i].x, pts[i].y])
-                        p2 = np.array([pts[i+1].x, pts[i+1].y])
-                        v = p2-p1; sl = np.dot(v,v)
-                        if sl > 0:
-                            t = np.clip(np.dot(sx-p1, v)/sl, 0, 1)
-                            min_d = min(min_d, np.linalg.norm(sx - (p1+t*v)))
-                    dist_to_route = min_d
-
-            ship_data_list.append({
-                'name': ship.name,
-                'current_heading_deg': float(ship.get_heading_deg()),
-                'base_heading_deg': float(ship.base_heading_deg),
-                'speed_ms': float(ship.u),
-                'current_rudder': float(ship.rudder_cmd),
-                'current_rpm': float(ship.rpm_cmd),
-                'status': status,
-                'autopilot_enabled': ap_enabled,
-                'distance_to_route_m': dist_to_route,
-                'pairs': pairs_info,
-                # === STRUCTURAL MANEUVER TRACKING MATRIX ===
-                'in_maneuver': ship.in_maneuver,
-                'maneuver_course_deg': ship.maneuver_course_deg,
-                'maneuver_target_course': ship.maneuver_target_course,
-            })
-        return {'ships': ship_data_list}
-
-        
-    '''
-
-
 
     def collect_ego_data(self, ego_ship):
         from colreg_rules import determine_colreg_situation
@@ -1405,17 +1329,14 @@ class MainWindow(QMainWindow):
             'pairs': pairs_info
         }
 
-
     def on_llm_result(self, ship_name, commands):
         """Processes telemetry response commands returned from decentralized agents."""
         self.llm_pending = False
         
-        # Find the specific target vessel this background worker belongs to
         ship = next((s for s in self.ships if s.name == ship_name), None)
         if not ship:
             return
 
-        # Handle valid dictionary commands from the LLM Agent
         if isinstance(commands, dict):
             rudder = commands.get("rudder_deg", 0)
             rpm = commands.get("rpm_percent", 50)
@@ -1424,12 +1345,10 @@ class MainWindow(QMainWindow):
             ship.apply_llm_command(rudder, rpm)
             ship.llm_decision = commands
             ship.llm_reasoning = reasoning
-        # Safeguard if the worker passes back a raw string error message
         elif isinstance(commands, str):
             ship.llm_reasoning = commands
             ship.llm_decision = {"rudder_deg": 0, "rpm_percent": 50, "reasoning": commands}
         
-        # Process maneuvers and tracking logic for all LLM-controlled ships
         for s in self.ships:
             if not s.llm_controlled:
                 continue
@@ -1498,34 +1417,40 @@ class MainWindow(QMainWindow):
                             
                             ship.apply_llm_command(rudder, rpm)
                             
-                            # Extract the pure agent reasoning from the last valid decision if present
+                            # 1. Attempt extraction from the dictionary structure first
                             agent_reason = ""
                             if hasattr(ship, 'llm_decision') and isinstance(ship.llm_decision, dict):
                                 agent_reason = ship.llm_decision.get('reasoning', '')
+
+                            # 2. Fall back to the raw attribute string if the dictionary is empty
                             if not agent_reason and hasattr(ship, 'llm_reasoning'):
-                                # Strip old autopilot tags if re-entering the loop
-                                agent_reason = ship.llm_reasoning.replace("(Autopilot) ", "")
-                                
-                            if not agent_reason:
+                                agent_reason = ship.llm_reasoning
+
+                            # 3. Clean up any existing autopilot tags to prevent stacking
+                            if isinstance(agent_reason, str):
+                                agent_reason = agent_reason.replace("(Autopilot) ", "")
+
+                            # 4. Fall back to default string if no core reasoning is left
+                            if not agent_reason or not agent_reason.strip():
                                 agent_reason = "Collision avoided."
-                                
-                            # Format according to requirements
-                            ship.llm_reasoning = f"(Autopilot) {agent_reason}"
+
+                            # 5. Append the uniform format cleanly
+                            ship.llm_reasoning = f"(Autopilot) {agent_reason.strip()}"
                             ship.llm_decision = {"rudder_deg": float(rudder), "rpm_percent": float(rpm), "reasoning": ship.llm_reasoning}
-                            
-                            # Use a clear state marker instead of relying on string matching
+
                             ship.status_state = "RESUME_COURSE"
-                            
+
                             if abs(heading_error) <= 1.0:
                                 ship.apply_llm_command(0.0, rpm)
                                 ship.in_maneuver = False
                                 ship.status_state = "ON_COURSE"
-                            else:
-                                worker = LLMWorker(coordinator, ship.name, ego_data)
-                                worker.result_ready.connect(self.on_llm_result)
-                                worker.error_occurred.connect(self.on_llm_error)
-                                self.llm_workers[ship.name] = worker
-                                worker.start()
+
+                        else:
+                            worker = LLMWorker(coordinator, ship.name, ego_data)
+                            worker.result_ready.connect(self.on_llm_result)
+                            worker.error_occurred.connect(self.on_llm_error)
+                            self.llm_workers[ship.name] = worker
+                            worker.start()
                     
                 self.last_llm_update = self.simulation_time
                     
@@ -1545,7 +1470,6 @@ class MainWindow(QMainWindow):
                 if heading_diff > 1:
                     ship.in_maneuver = True
                 else:
-                    # If variance falls within bounds and it's not maneuvering, it's firmly back on track
                     if not getattr(ship, 'status_state', None) == "RESUME_COURSE":
                         ship.status_state = "ON_COURSE"
                     
@@ -1568,14 +1492,10 @@ class MainWindow(QMainWindow):
 
 
 if __name__ == "__main__":
-    # 1. Force the high-DPI flag BEFORE any instance initialization logic happens
     import os
     os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
     
-    # 2. Fire the application instance framework
     app = QApplication(sys.argv)
-    
-    # 3. Instantiate the clean window logic
     window = MainWindow()
     window.show()
     sys.exit(app.exec_())

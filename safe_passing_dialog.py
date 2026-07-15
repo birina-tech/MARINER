@@ -73,7 +73,7 @@ class SafePassingDialog(QDialog):
         self.angle_spin.setRange(15, 90)
         self.angle_spin.setValue(60)
         self.angle_spin.setDecimals(0)
-        self.angle_spin.setSuffix("°")
+        self.angle_spin.setSuffix("\u00b0")
         self.angle_spin.valueChanged.connect(self.on_settings_changed)
         angle_form.addRow("Max turn angle:", self.angle_spin)
         settings_layout.addLayout(angle_form)
@@ -203,8 +203,8 @@ class SafePassingDialog(QDialog):
             ("Maneuver threshold", f"{timing_plan['maneuver_start_tcpa_s']:.0f} s"),
             ("Urgency", timing_plan['urgency'].upper()),
             ("", ""),
-            ("New course", f"{course_plan['safe_course_deg']:.1f}°"),
-            ("Turn angle", f"{course_plan['turn_angle_deg']:+.1f}°"),
+            ("New course", f"{course_plan['safe_course_deg']:.1f}\u00b0"),
+            ("Turn angle", f"{course_plan['turn_angle_deg']:+.1f}\u00b0"),
             ("Turn direction", "STARBOARD" if course_plan['turn_angle_deg'] > 0 else "PORT"),
             ("", ""),
             ("Valid solution", "YES" if course_plan['is_valid'] else "NO"),
@@ -243,13 +243,13 @@ class SafePassingDialog(QDialog):
         
         details = f"""
 <b>Vessel Details:</b>
-• {give_way_ship.name}: Course {give_way_ship.get_heading_deg():.1f}°, Speed {give_way_ship.u:.1f} m/s
-• {stand_on_ship.name}: Course {stand_on_ship.get_heading_deg():.1f}°, Speed {stand_on_ship.u:.1f} m/s
+• {give_way_ship.name}: Course {give_way_ship.get_heading_deg():.1f}\u00b0, Speed {give_way_ship.u:.1f} m/s
+• {stand_on_ship.name}: Course {stand_on_ship.get_heading_deg():.1f}\u00b0, Speed {stand_on_ship.u:.1f} m/s
 
 <b>Maneuver Plan:</b>
-• Current course: {give_way_ship.get_heading_deg():.1f}°
-• New course: {course_plan['safe_course_deg']:.1f}°
-• Turn: {course_plan['turn_angle_deg']:+.1f}°
+• Current course: {give_way_ship.get_heading_deg():.1f}\u00b0
+• New course: {course_plan['safe_course_deg']:.1f}\u00b0
+• Turn: {course_plan['turn_angle_deg']:+.1f}\u00b0
 • Time to maneuver: {timing_plan['time_to_maneuver_s']:.0f} s
 """
         self.details_text.setHtml(details)
@@ -333,7 +333,7 @@ class SafePassingDialog(QDialog):
         turn_angle = (new_course - current_heading + 180) % 360 - 180
         give_way_ship.rudder_cmd = max(-35, min(35, turn_angle * 2))
         
-        QMessageBox.information(self, "Course Applied", f"New course {new_course:.1f}° applied to {give_way_ship.name}")
+        QMessageBox.information(self, "Course Applied", f"New course {new_course:.1f}\u00b0 applied to {give_way_ship.name}")
         self.update_calculation()
 
 

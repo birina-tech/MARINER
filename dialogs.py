@@ -42,7 +42,7 @@ class AddShipDialog(QDialog):
         self.course_input.setRange(0, 359)
         self.course_input.setValue(default_course)
         self.course_input.setDecimals(0)
-        self.course_input.setSuffix("°")
+        self.course_input.setSuffix("\u00b0")
         form_layout.addRow("Course:", self.course_input)
         
         self.speed_input = QDoubleSpinBox()
@@ -117,8 +117,8 @@ class ControlDialog(QDialog):
         else:
             self.speed_label = QLabel(f"{ship.u:.2f} m/s")
         
-        self.course_label = QLabel(f"{ship.get_heading_deg():.1f}°")
-        self.rot_label = QLabel(f"{ship.get_rot():+.1f}°/min" if hasattr(ship, 'get_rot') else "N/A")
+        self.course_label = QLabel(f"{ship.get_heading_deg():.1f}\u00b0")
+        self.rot_label = QLabel(f"{ship.get_rot():+.1f}\u00b0/min" if hasattr(ship, 'get_rot') else "N/A")
         self.info_layout.addRow("ROT:", self.rot_label)
         
         self.info_layout.addRow("Name:", self.name_label)
@@ -137,7 +137,7 @@ class ControlDialog(QDialog):
         rudder_layout = QVBoxLayout()
         
         # Метка "текущее значение"
-        self.rudder_current_label = QLabel(f"Current: {ship.rudder_cmd:.0f}°")
+        self.rudder_current_label = QLabel(f"Current: {ship.rudder_cmd:.0f}\u00b0")
         self.rudder_current_label.setStyleSheet("color: gray; font-style: italic;")
         rudder_layout.addWidget(self.rudder_current_label)
         
@@ -152,7 +152,7 @@ class ControlDialog(QDialog):
         self.rudder_slider.setTickPosition(QSlider.TicksBelow)
         self.rudder_slider.setTickInterval(5)
         
-        self.rudder_value_label = QLabel(f"{ship.rudder_cmd:.0f}°")
+        self.rudder_value_label = QLabel(f"{ship.rudder_cmd:.0f}\u00b0")
         self.rudder_value_label.setFixedWidth(50)
         self.rudder_value_label.setAlignment(Qt.AlignCenter)
         self.rudder_value_label.setStyleSheet("font-weight: bold;")
@@ -246,17 +246,17 @@ class ControlDialog(QDialog):
             self.speed_label.setText(f"{self.ship.u:.2f} m/s")
         
         # Курс
-        self.course_label.setText(f"{self.ship.get_heading_deg():.1f}°")
-        self.rot_label.setText(f"{self.ship.get_rot():+.1f}°/min")
+        self.course_label.setText(f"{self.ship.get_heading_deg():.1f}\u00b0")
+        self.rot_label.setText(f"{self.ship.get_rot():+.1f}\u00b0/min")
         
         # Обновляем только метки "Current:" рядом с ползунками
-        self.rudder_current_label.setText(f"Current: {self.ship.rudder_cmd:.0f}°")
+        self.rudder_current_label.setText(f"Current: {self.ship.rudder_cmd:.0f}\u00b0")
         self.rpm_current_label.setText(f"Current: {self.ship.rpm_cmd:.0f}%")
         
         # ПОЛЗУНКИ НЕ ОБНОВЛЯЮТСЯ — они представляют намерение пользователя
     
     def update_rudder_label(self, value):
-        self.rudder_value_label.setText(f"{value}°")
+        self.rudder_value_label.setText(f"{value}\u00b0")
     
     def update_rpm_label(self, value):
         self.rpm_value_label.setText(f"{value}%")
@@ -268,7 +268,7 @@ class ControlDialog(QDialog):
         self.ship.llm_controlled = self.llm_checkbox.isChecked()
         
         # После применения синхронизируем метки "Current:" с ползунками
-        self.rudder_current_label.setText(f"Current: {self.rudder_slider.value():.0f}°")
+        self.rudder_current_label.setText(f"Current: {self.rudder_slider.value():.0f}\u00b0")
         self.rpm_current_label.setText(f"Current: {self.rpm_slider.value():.0f}%")
     
     def closeEvent(self, event):

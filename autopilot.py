@@ -86,7 +86,7 @@ class RouteAutopilot:
         self.mode = self.MODE_HOLD_COURSE
         self.hold_course_rad = np.deg2rad(course_deg)
         self.reset_integrals()
-        print(f"[Autopilot] {self.ship.name}: HOLD COURSE {course_deg:.1f}°")
+        print(f"[Autopilot] {self.ship.name}: HOLD COURSE {course_deg:.1f}\u00b0")
 
     def resume_route(self):
         """Вернуться к следованию по маршруту"""

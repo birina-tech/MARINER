@@ -205,8 +205,8 @@ class CollisionAnalysisWindow(QMainWindow):
         for ship in ships:
             maneuver = maneuvers.get(ship.name, {})
             text += f"<li><b>{ship.name}</b>: "
-            text += f"Turn {maneuver.get('turn_angle_deg', 0):+.0f}° "
-            text += f"to course {maneuver.get('new_course_deg', 0):.0f}°<br>"
+            text += f"Turn {maneuver.get('turn_angle_deg', 0):+.0f}\u00b0 "
+            text += f"to course {maneuver.get('new_course_deg', 0):.0f}\u00b0<br>"
             text += f"<i>{maneuver.get('reason', '')}</i></li>"
         text += "</ul>"
         msg.setText(text)
@@ -293,12 +293,12 @@ class CollisionAnalysisWindow(QMainWindow):
                 bearing_2_to_1 = details.get('bearing_2_to_1', None)
 
                 if bearing_1_to_2 is not None:
-                    self.table.setItem(row, 7, QTableWidgetItem(f"{bearing_1_to_2:.0f}°"))
+                    self.table.setItem(row, 7, QTableWidgetItem(f"{bearing_1_to_2:.0f}\u00b0"))
                 else:
                     self.table.setItem(row, 7, QTableWidgetItem("-"))
 
                 if bearing_2_to_1 is not None:
-                    self.table.setItem(row, 8, QTableWidgetItem(f"{bearing_2_to_1:.0f}°"))
+                    self.table.setItem(row, 8, QTableWidgetItem(f"{bearing_2_to_1:.0f}\u00b0"))
                 else:
                     self.table.setItem(row, 8, QTableWidgetItem("-"))
 

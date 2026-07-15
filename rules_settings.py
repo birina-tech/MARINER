@@ -10,12 +10,12 @@ DEFAULT_SETTINGS = {
         "bearing_threshold_deg": 112.5,
         "max_distance_m": 5556,
         "speed_ratio_threshold": 1.0,
-        "description": "Bearing > 112.5° (22.5° abaft beam)"
+        "description": "Bearing > 112.5\u00b0 (22.5\u00b0 abaft beam)"
     },
     "rule_14_head_on": {
         "bearing_threshold_deg": 5.0,
         "max_distance_m": 5556,
-        "description": "Bearing within ±5° of head-on"
+        "description": "Bearing within ±5\u00b0 of head-on"
     },
     "rule_15_crossing": {
         "max_distance_m": 5556,

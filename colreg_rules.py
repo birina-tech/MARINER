@@ -10,7 +10,7 @@ from rules_settings import get_rules_settings
 def calculate_relative_bearing(ship1, ship2):
     """
     Рассчитать ОТНОСИТЕЛЬНЫЙ пеленг с ship1 на ship2
-    Отсчитывается от курса ship1 (носа судна) по часовой стрелке 0-360°
+    Отсчитывается от курса ship1 (носа судна) по часовой стрелке 0-360 
     """
     # Истинный пеленг на ship2 (от севера)
     dx = ship2.x - ship1.x
@@ -58,7 +58,7 @@ def check_rule_14(ship1, ship2, settings=None):
     bearing_2_to_1 = calculate_relative_bearing(ship2, ship1)
     
     def is_in_head_on_range(bearing):
-        # Проверяем, находится ли пеленг в диапазоне ±threshold от 0° (или 360°)
+        # Проверяем, находится ли пеленг в диапазоне ±threshold от 0 (или 360)
         return bearing <= bearing_threshold or bearing >= (360 - bearing_threshold)
     
     if is_in_head_on_range(bearing_1_to_2) and is_in_head_on_range(bearing_2_to_1):
@@ -70,15 +70,15 @@ def check_rule_14(ship1, ship2, settings=None):
 def check_rule_13(ship1, ship2, settings=None):
     """
     Правило 13 - Обгон
-    Сектор обгона: от (180° - threshold) до (180° + threshold)
-    По умолчанию: от 112.5° до 247.5° (22.5° позади траверза)
+    Сектор обгона: от (180 - threshold) до (180 + threshold)
+    По умолчанию: от 112.5 до 247.5 (22.5 позади траверза)
     """
     if settings is None:
         settings = get_rules_settings()
     
     # Получаем параметры из настроек
     # bearing_threshold - это угол ОТ НОСА, за которым начинается сектор
-    # По умолчанию 112.5° (т.е. 22.5° позади траверза)
+    # По умолчанию 112.5 (т.е. 22.5 позади траверза)
     bearing_threshold = settings.get("rule_13_overtaking", "bearing_threshold_deg", 112.5)
     max_distance = settings.get("rule_13_overtaking", "max_distance_m", 5556)
     speed_ratio = settings.get("rule_13_overtaking", "speed_ratio_threshold", 1.0)
@@ -98,8 +98,8 @@ def check_rule_13(ship1, ship2, settings=None):
             return False, None, None
     
     # ПРАВИЛЬНАЯ проверка сектора обгона (симметричного относительно кормы)
-    # Сектор: от bearing_threshold до (360° - bearing_threshold)
-    # Для threshold=112.5°: сектор 112.5° - 247.5°
+    # Сектор: от bearing_threshold до (360 - bearing_threshold)
+    # Для threshold=112.5: сектор 112.5 - 247.5
     def is_in_overtaking_sector(bearing):
         return bearing_threshold <= bearing <= (360 - bearing_threshold)
     
@@ -120,6 +120,7 @@ def check_rule_13(ship1, ship2, settings=None):
     # Для Rule 13: ship2 должен быть в секторе обгона ship1
     # (т.е. ship2 находится позади траверза ship1)
     if is_in_overtaking_sector(bearing_1_to_2) and approaching:
+        print("Rule 13 was triggered")
         return True, bearing_1_to_2, bearing_2_to_1
     
     return False, bearing_1_to_2, bearing_2_to_1
@@ -186,6 +187,7 @@ def check_normal_conditions(dist_m, cpa_m, tcpa_s, settings=None):
     
     # Проверяем, находится ли ситуация в пределах анализа
     if dist_m <= detection_range and cpa_m < min_cpa and tcpa_s < min_tcpa:
+        print("Normal conditions applies")
         return True
     
     return False
@@ -219,35 +221,7 @@ def determine_colreg_situation(ship1, ship2, dist_m, cpa_m, tcpa_s):
             }
         }
     
-    # Проверка нормальных условий
-    if not check_normal_conditions(dist_m, cpa_m, tcpa_s, settings):
-        return {
-            'rule': 'None',
-            'situation': 'Safe situation',
-            'ship1_action': 'Stand on',
-            'ship2_action': 'Stand on',
-            'details': {
-                'bearing_1_to_2': bearing_1_to_2,
-                'bearing_2_to_1': bearing_2_to_1,
-            }
-        }
-    
-    # Проверка правила 14 (встречная)
-    is_rule_14, b1, b2 = check_rule_14(ship1, ship2, settings)
-    if is_rule_14:
-        return {
-            'rule': '14',
-            'situation': 'Head-on situation',
-            'ship1_action': 'Alter course to starboard',
-            'ship2_action': 'Alter course to starboard',
-            'details': {
-                'bearing_1_to_2': b1,
-                'bearing_2_to_1': b2,
-                'dist_nm': dist_m / 1852.0,
-                'cpa_nm': cpa_m / 1852.0,
-                'tcpa_min': tcpa_s / 60.0
-            }
-        }
+
     
     # Проверка правила 13 (обгон)
     is_rule_13, b1, b2 = check_rule_13(ship1, ship2, settings)
@@ -276,12 +250,29 @@ def determine_colreg_situation(ship1, ship2, dist_m, cpa_m, tcpa_s):
                 'overtaking_ship': overtaking_ship
             }
         }
-    
+    # Проверка правила 14 (встречная)
+    is_rule_14, b1, b2 = check_rule_14(ship1, ship2, settings)
+    if is_rule_14:
+        return {
+            'rule': '14',
+            'situation': 'Head-on situation',
+            'ship1_action': 'Alter course to starboard',
+            'ship2_action': 'Alter course to starboard',
+            'details': {
+                'bearing_1_to_2': b1,
+                'bearing_2_to_1': b2,
+                'dist_nm': dist_m / 1852.0,
+                'cpa_nm': cpa_m / 1852.0,
+                'tcpa_min': tcpa_s / 60.0
+            }
+        }
+
+
     # Проверка правила 15 (пересечение)
     is_rule_15, b1, b2 = check_rule_15(ship1, ship2, settings)
     if is_rule_15:
         def is_stand_on(bearing):
-            # Судно сохраняет курс, если другое судно у него по правому борту (10°-110°)
+            # Судно сохраняет курс, если другое судно у него по правому борту (10-110)
             return 10 <= bearing <= 110
         
         ship1_stand_on = is_stand_on(bearing_2_to_1)
@@ -306,7 +297,24 @@ def determine_colreg_situation(ship1, ship2, dist_m, cpa_m, tcpa_s):
                 'tcpa_min': tcpa_s / 60.0
             }
         }
-    
+
+
+    # Проверка нормальных условий
+    if not check_normal_conditions(dist_m, cpa_m, tcpa_s, settings):
+        return {
+            'rule': 'None',
+            'situation': 'Safe situation',
+            'ship1_action': 'Stand on',
+            'ship2_action': 'Stand on',
+            'details': {
+                'bearing_1_to_2': bearing_1_to_2,
+                'bearing_2_to_1': bearing_2_to_1,
+            }
+        }
+
+
+
+
     return {
         'rule': 'Unknown',
         'situation': 'Uncertain situation',

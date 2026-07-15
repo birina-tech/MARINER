@@ -72,19 +72,14 @@ Actions (follow strictly unless safety is at risk):
 3. MANEUVER MAGNITUDE for some rules:
    - Under Rule 14 for Head-on Situation: rudder should be from 15 to 25 deg starboard.
    - Under Rule 15 for Crossing Situation: rudder should be from 15 to 25 deg starboard.
-   - Under Rule 13 for overtaking: rudder should be from 10 to 20 deg away from overtaken vessel, RMP can be up to 70% or slightly more if absolutly justified. 
+   - Under Rule 13 for overtaking: rudder should be from 10 to 20 deg away from overtaken vessel, RMP should be from faster than overtakem vessel and up to rpm=70. 
    - Under Rule 17.2 for critical convergence / emergency: rudder should be from 20 to 35 deg STARBOARD. Reduce RPM to at least 30-40% (or less) if CPA < 500 meters.
    -- In other situations apply smooth changes: max 15 deg rudder change per step.
 
-4. ECO-MODE:
-   - Prefer rudder changes over RPM changes.
-   - Keep RPM at 50% unless CPA < 1000m or emergency.
-   - If reducing RPM: min 30%, never 0%.
-
-5. NO MANEUVER NEEDED:
+4. NO MANEUVER NEEDED:
    - If status == "HOLD_COURSE" AND not "returning" -> output rudder=0, rpm=50.
    
-6. TRAJECTORY MEMORY ANALYSIS:
+5. TRAJECTORY MEMORY ANALYSIS:
    - Review the `recent_history` of other vessels. 
    - If their heading changes significantly between T-15m and T-5m, it indicates they are actively maneuvering or avoiding collision. 
    - If a Stand-On vessel is actively maneuvering erratically, treat the situation with higher caution and increase your clearance distance.

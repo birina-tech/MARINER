@@ -1,6 +1,6 @@
 """
 canvas.py
-Холст для отображения судов, маршрутов и прогнозируемых треков
+Canvas for displaying vessels, routes, and predicted tracks
 """
 import numpy as np
 from PyQt5.QtCore import Qt
@@ -33,26 +33,26 @@ class ShipCanvas(FigureCanvas):
         self.vector_length_minutes = 12.0
         self.track_length_meters = 5000.0
 
-        # Единицы измерения
+        # Units of measurement
         self.use_miles = use_miles
         self.use_knots = use_knots
 
-        # Прогнозируемые треки и маршруты
+        # Predicted tracks and routes
         self.predicted_tracks = {}
         self.routes = []
 
-        # Режим редактирования маршрута
+        # Route editing mode parameters
         self.editing_route = None
         self.dragging_point_index = None
-        self.route_point_click_radius = 80  # радиус захвата точки маршрута (пиксели)
+        self.route_point_click_radius = 80  # Route point selection radius in pixels
 
-        # Убираем все отступы
+        # Remove all layout margins
         self.fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
 
         self.ax.set_xlim(-self.view_scale, self.view_scale)
         self.ax.set_ylim(-self.view_scale, self.view_scale)
 
-        # Метки ВНУТРИ области построения
+        # Labels INSIDE the plotting area
         self.ax.tick_params(axis='both', which='both', direction='in',
                             top=True, right=True, left=True, bottom=True)
         self.ax.tick_params(axis='x', which='both', pad=-15)
@@ -78,7 +78,6 @@ class ShipCanvas(FigureCanvas):
         h = event.size().height()
         if w > 0 and h > 0:
             self.fig.set_size_inches(w / self.fig.dpi, h / self.fig.dpi)
-            # Передаём все параметры с именами
             self.update_plot(
                 self.ships, False, 0.0,
                 use_miles=self.use_miles,
@@ -108,13 +107,13 @@ class ShipCanvas(FigureCanvas):
 
     def get_clicked_route_point(self, x, y):
         """
-        Проверить, попал ли клик на точку маршрута.
-        Возвращает (route, point_index) или (None, None).
+        Check if the mouse click hit a route waypoint.
+        Returns (route, point_index) or (None, None).
         """
         if x is None or y is None:
             return None, None
 
-        # Преобразуем координаты в пиксели для сравнения
+        # Convert data coordinates to pixels for comparison
         bbox = self.ax.get_window_extent()
         xlim = self.ax.get_xlim()
         ylim = self.ax.get_ylim()
@@ -141,9 +140,8 @@ class ShipCanvas(FigureCanvas):
             return
 
         if event.button == 1:
-            # ЛКМ — если в режиме перетаскивания точки маршрута
+            # LMB - if in dragging mode for a route waypoint
             if self.dragging_point_index is not None and self.editing_route:
-                # Перемещаем точку маршрута
                 route = self.editing_route
                 idx = self.dragging_point_index
                 if 0 <= idx < len(route.points):
@@ -151,12 +149,11 @@ class ShipCanvas(FigureCanvas):
                     route.points[idx].y = event.ydata
                     route._recalculate()
                     self.draw()
-                    # Уведомить родительское окно об изменении
                     if self.on_route_point_moved_callback:
                         self.on_route_point_moved_callback(route, idx)
                 return
 
-            # Иначе — стандартное панорамирование
+            # Otherwise - standard map panning initialization
             self.is_panning = True
             self.pan_start_pos = (event.x, event.y)
             self.pan_start_center = (self.view_center_x, self.view_center_y)
@@ -166,16 +163,15 @@ class ShipCanvas(FigureCanvas):
         if event.button == 3:
             x, y = event.xdata, event.ydata
 
-            # Проверяем клик на точку маршрута
+            # Check if clicking a route waypoint
             route, point_idx = self.get_clicked_route_point(x, y)
 
             if route is not None and point_idx is not None:
-                # Если есть callback для клика на точку маршрута — вызываем его
                 if self.on_route_point_click_callback:
                     self.on_route_point_click_callback(route, point_idx, x, y)
                 return
 
-            # Стандартная логика ПКМ
+            # Standard RMB logic for vessels or empty field
             clicked_ship = None
             click_radius = max(60, self.view_scale * 0.02)
             for ship in self.ships:
@@ -216,7 +212,7 @@ class ShipCanvas(FigureCanvas):
             self.ax.set_ylim(y_min, y_max)
             self.draw()
 
-        # Если перетаскиваем точку маршрута
+        # If dragging a route waypoint
         if (self.dragging_point_index is not None and 
                 self.editing_route and event.inaxes == self.ax):
             route = self.editing_route
@@ -236,7 +232,6 @@ class ShipCanvas(FigureCanvas):
     def on_release(self, event):
         if event.button == 1:
             if self.dragging_point_index is not None:
-                # Завершаем перетаскивание точки маршрута
                 self.dragging_point_index = None
                 self.setCursor(Qt.OpenHandCursor)
                 return
@@ -270,7 +265,7 @@ class ShipCanvas(FigureCanvas):
                                          lw=0.5, mutation_scale=15), zorder=6)
 
     def _apply_tick_style(self):
-        """Применяет стиль меток"""
+        """Applies style configuration to map grid labels"""
         self.ax.tick_params(axis='both', which='both', direction='in',
                             top=True, right=True, left=True, bottom=True)
         self.ax.tick_params(axis='x', which='both', pad=-15)
@@ -284,17 +279,17 @@ class ShipCanvas(FigureCanvas):
 
     def update_plot(self, ships, running, simulation_time,
                     use_miles=None, use_knots=None,
-                    predicted_tracks=None, routes=None, chart_data=None):
+                    predicted_tracks=None, routes=None, chart_data=None,
+                    ego_perspective=None):
         """
-        Обновить график.
+        Refresh chart plot layout. Added ego_perspective to fix method signature mismatch.
         """
-        # Инициализация значений по умолчанию
         if predicted_tracks is None:
             predicted_tracks = {}
         if routes is None:
             routes = []
 
-        # Сохраняем параметры
+        # Save settings state configurations
         if use_miles is not None:
             self.use_miles = use_miles
         if use_knots is not None:
@@ -312,10 +307,10 @@ class ShipCanvas(FigureCanvas):
 
         self.ax.set_aspect('equal')
 
-        # Применяем стиль меток после clear()
+        # Apply grid text styles after clear event
         self._apply_tick_style()
 
-        # Форматирование меток осей
+        # Format axis labels safely
         if self.use_miles:
             def format_axis_miles(x, pos):
                 miles = x / 1852.0
@@ -341,7 +336,7 @@ class ShipCanvas(FigureCanvas):
 
         self.ax.grid(True, alpha=0.5)
 
-        # === ОТРИСОВКА МАРШРУТОВ ===
+        # === ROUTE RENDERING ENGINE ===
         for route in self.routes:
             if len(route.points) < 2:
                 continue
@@ -350,40 +345,40 @@ class ShipCanvas(FigureCanvas):
             route_x = [c[0] for c in coordinates]
             route_y = [c[1] for c in coordinates]
 
-            # Линия маршрута
+            # Route lines
             self.ax.plot(route_x, route_y,
-                         color='blue', linewidth=2, linestyle='-',
+                         color='#595757', linewidth=2, linestyle='-',
                          alpha=0.6, zorder=2)
 
-            # Точки маршрута
+            # Route waypoints
             self.ax.plot(route_x, route_y,
                          marker='o', markersize=8,
-                         color='blue', markeredgecolor='black',
+                         color='#595757', markeredgecolor='black',
                          markeredgewidth=1.5, zorder=3)
 
-            # Номера точек
+            # Waypoint labels
             for point in route.points:
                 self.ax.text(point.x + 100, point.y + 100,
                              f"P{point.point_number}",
                              fontsize=9, fontweight='bold',
-                             color='blue',
+                             color='#595757',
                              bbox=dict(boxstyle='round', facecolor='white',
-                                       alpha=0.8, edgecolor='blue'),
+                                       alpha=0.8, edgecolor='#595757'),
                              zorder=4)
 
-            # Название маршрута
+            # Route title identifier
             if route.points:
                 mid_x = np.mean(route_x)
                 mid_y = np.mean(route_y)
                 self.ax.text(mid_x, mid_y - 200,
                              route.name,
                              fontsize=10, fontweight='bold',
-                             color='darkblue',
+                             color='#595757',
                              bbox=dict(boxstyle='round', facecolor='yellow',
-                                       alpha=0.7, edgecolor='darkblue'),
+                                       alpha=0.7, edgecolor='#595757'),
                              zorder=4)
 
-        # === ОТРИСОВКА ПРОГНОЗИРУЕМЫХ ТРЕКОВ ===
+        # === PREDICTED MANEUVER TRAJECTORIES ===
         for ship_name, track_data in self.predicted_tracks.items():
             role = track_data.get('role', 'unknown')
             pre_maneuver = track_data.get('pre_maneuver', [])
@@ -430,7 +425,7 @@ class ShipCanvas(FigureCanvas):
                 new_course = track_data.get('new_course')
                 if new_course is not None:
                     self.ax.text(maneuver_point[0] + 100, maneuver_point[1] + 100,
-                                 f"Turn\nto {new_course:.0f}°",
+                                 f"Turn\nto {new_course:.0f}\u00b0",
                                  fontsize=8,
                                  color=point_color,
                                  fontweight='bold',
@@ -452,9 +447,9 @@ class ShipCanvas(FigureCanvas):
             self.ax.legend(handles=legend_elements, loc='upper right', fontsize=8,
                            framealpha=0.9)
         
-        # === ОТРИСОВКА НАВИГАЦИОННОЙ КАРТЫ (S-57) ===
+        # === NAVIGATION METADATA MAP RENDERING ENGINE (S-57 STYLE) ===
         if chart_data and chart_data.get('is_loaded'):
-            # 1. Участки суши (серые полигоны)
+            # 1. Landmass features (Brown fill structures)
             for polygon_rings in chart_data['land_polygons']:
                 for ring in polygon_rings:
                     if len(ring) > 2:
@@ -464,14 +459,13 @@ class ShipCanvas(FigureCanvas):
                                     edgecolor='black', linewidth=0.5, 
                                     alpha=0.4, zorder=1)
             
-            # 2. Изобаты (линии равных глубин) — синим цветом
+            # 2. Depth Isobars
             for contour in chart_data.get('depth_contours', []):
                 points = contour['points']
                 depth = contour['depth']
                 if len(points) > 1:
                     xs = [p[0] for p in points]
                     ys = [p[1] for p in points]
-                    # Мелководье — красным, глубже — синим
                     if depth < 10:
                         color = '#FF4444'
                         lw = 1.5
@@ -483,7 +477,7 @@ class ShipCanvas(FigureCanvas):
                         lw = 0.8
                     self.ax.plot(xs, ys, color=color, linewidth=lw, 
                                 alpha=0.7, zorder=1)
-                    # Подпись глубины на изобате (только для крупных)
+                    
                     if len(points) > 5 and self.view_scale < 3000:
                         mid_idx = len(points) // 2
                         self.ax.text(points[mid_idx][0], points[mid_idx][1],
@@ -493,7 +487,7 @@ class ShipCanvas(FigureCanvas):
                                             facecolor='white', alpha=0.7),
                                     zorder=2)
             
-            # 3. Препятствия (красные крестики)
+            # 3. Hazards and Obstacles (Red Cross Markers)
             for obs in chart_data.get('obstacles', []):
                 self.ax.plot(obs['x'], obs['y'], marker='x', 
                             color='red', markersize=10, 
@@ -504,7 +498,7 @@ class ShipCanvas(FigureCanvas):
                                 fontsize=7, color='red', fontweight='bold',
                                 zorder=3)
                 
-        # === ОТРИСОВКА СУДОВ ===
+        # === ACTIVE KINEMATIC VESSELS ===
         for ship in ships:
             track_x = []
             track_y = []
@@ -532,9 +526,9 @@ class ShipCanvas(FigureCanvas):
             font_size = max(7, min(10, 1000 / self.view_scale * 10))
             llm_text = ship.get_llm_status_text()
             self.ax.text(ship.x + 80, ship.y + 80,
-                         f"{ship.name}\n{ship.get_heading_deg():.0f}°\n"
+                         f"{ship.name}\n{ship.get_heading_deg():.0f}\u00b0\n"
                          f"{ship.u:.1f} m/s\n"
-                         f"R:{ship.rudder_cmd:.0f}° RPM:{ship.rpm_cmd:.0f}%{llm_text}",
+                         f"R:{ship.rudder_cmd:.0f}\u00b0 RPM:{ship.rpm_cmd:.0f}%{llm_text}",
                          fontsize=font_size, ha='left', va='bottom',
                          bbox=dict(boxstyle='round', facecolor='white',
                                    alpha=0.8, edgecolor='gray'))
