@@ -1308,6 +1308,8 @@ class MainWindow(QMainWindow):
             status = 'RETURN_TO_COURSE'
         elif must_yield:
             status = 'MUST_YIELD'
+        elif ego_ship.in_maneuver:
+            status = 'MANEUVERING'    
         else:
             status = 'HOLD_COURSE'
         
@@ -1446,6 +1448,12 @@ class MainWindow(QMainWindow):
                                 ship.status_state = "ON_COURSE"
 
                         else:
+                            # If we are entering this block, it means the ship is NOT in 'RETURN_TO_COURSE'
+                            # and must consult the LLM because a threat exists or course is held.
+                            # Clear the old autopilot return state if a new threat takes over.
+                            if getattr(ship, 'status_state', None) == "RESUME_COURSE":
+                                ship.status_state = "MANEUVERING"
+
                             worker = LLMWorker(coordinator, ship.name, ego_data)
                             worker.result_ready.connect(self.on_llm_result)
                             worker.error_occurred.connect(self.on_llm_error)
@@ -1468,10 +1476,14 @@ class MainWindow(QMainWindow):
             for ship in self.ships:
                 heading_diff = abs((ship.base_heading_deg - ship.get_heading_deg() + 180) % 360 - 180)
                 if heading_diff > 1:
-                    ship.in_maneuver = True
+                    # If the ship is not explicitly under the autopilot return loop, it is maneuvering
+                    if getattr(ship, 'status_state', None) != "RESUME_COURSE":
+                        ship.in_maneuver = True
                 else:
-                    if not getattr(ship, 'status_state', None) == "RESUME_COURSE":
-                        ship.status_state = "ON_COURSE"
+                    
+                    # Clear the maneuvering and return states once course is stable
+                    ship.in_maneuver = False
+                    ship.status_state = "ON_COURSE"
                     
                 ship.update(self.dt)
                 self.log_ship_state(ship)

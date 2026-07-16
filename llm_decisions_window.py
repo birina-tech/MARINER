@@ -116,12 +116,19 @@ class LLMDecisionsWindow(QMainWindow):
             # Determine status based on explicit structural states
             ship_state = getattr(ship, 'status_state', 'ON_COURSE')
 
-            if ship_state == "RESUME_COURSE" and ship.in_maneuver:
+            # If the ship's current decision indicates active avoidance reasoning, force Maneuvering status
+            has_active_avoidance = False
+            if hasattr(ship, 'llm_decision') and ship.llm_decision:
+                reasoning_text = ship.llm_decision.get('reasoning', '').lower()
+                if "avoid" in reasoning_text or "yield" in reasoning_text:
+                    has_active_avoidance = True
+
+            if ship.in_maneuver and (ship_state == "MANEUVERING" or has_active_avoidance):
+                status = "MANEUVERING"
+                status_color = QColor(255, 200, 0)   # Orange
+            elif ship_state == "RESUME_COURSE" and ship.in_maneuver:
                 status = "Resume Course"
                 status_color = QColor(135, 206, 250) # Light Sky Blue
-            elif ship.in_maneuver:
-                status = "MANEUVERING"
-                status_color = QColor(255, 200, 0) # Orange
             else:
                 status = "ON COURSE"
                 status_color = QColor(144, 238, 144) # Green
