@@ -436,9 +436,9 @@ class ShipCanvas(FigureCanvas):
         if self.predicted_tracks:
             legend_elements = [
                 Line2D([0], [0], color='#FFA500', linewidth=2, linestyle='--',
-                       label='Pre-maneuver (give-way)'),
+                       label='Pre-maneuver'),
                 Line2D([0], [0], color='#00AA00', linewidth=2.5, linestyle='-.',
-                       label='Post-maneuver (give-way)'),
+                       label='Post-maneuver'),
                 Line2D([0], [0], color='#4444FF', linewidth=2, linestyle='--',
                        label='Stand-on track'),
                 Line2D([0], [0], marker='o', color='w', markerfacecolor='#FF0000',

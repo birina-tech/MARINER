@@ -1334,13 +1334,13 @@ class MainWindow(QMainWindow):
         
         # Final status assignment based strictly on hierarchical logic dominance
         if dominant_status == 'CRITICAL_CONVERGENCE':
-            status = 'MUST_YIELD'  # Kept as MUST_YIELD for LLM vocabulary parsing match, but prioritized
+            status = 'MUST_YIELD'  
         elif max(highest_rule_severity, 0) > 0:
             status = 'MUST_YIELD'
         elif all_passed and heading_diff > 1 and ego_ship.in_maneuver:
-            status = 'RETURN_TO_COURSE'
+            status = 'MANEUVER'  # Reserved for tracking course return under no risk
         elif ego_ship.in_maneuver:
-            status = 'MANEUVERING'    
+            status = 'MUST_YIELD' # If in avoidance maneuver, it is bound by yield constraints   
         else:
             status = 'HOLD_COURSE'
         
@@ -1443,47 +1443,40 @@ class MainWindow(QMainWindow):
                     if not worker_active:
                         ego_data = self.collect_ego_data(ship)
                             
-                        if ego_data['status'] == 'RETURN_TO_COURSE':
+                        if ego_data['status'] == 'MANEUVER':
                             heading_error = (ship.base_heading_deg - ship.get_heading_deg() + 180) % 360 - 180
                             rudder = np.clip(1.5 * heading_error, -35.0, 35.0) 
                             rpm = 50.0
                             
                             ship.apply_llm_command(rudder, rpm)
                             
-                            # 1. Attempt extraction from the dictionary structure first
                             agent_reason = ""
                             if hasattr(ship, 'llm_decision') and isinstance(ship.llm_decision, dict):
                                 agent_reason = ship.llm_decision.get('reasoning', '')
 
-                            # 2. Fall back to the raw attribute string if the dictionary is empty
                             if not agent_reason and hasattr(ship, 'llm_reasoning'):
                                 agent_reason = ship.llm_reasoning
 
-                            # 3. Clean up any existing autopilot tags to prevent stacking
                             if isinstance(agent_reason, str):
                                 agent_reason = agent_reason.replace("(Autopilot) ", "")
 
-                            # 4. Fall back to default string if no core reasoning is left
                             if not agent_reason or not agent_reason.strip():
-                                agent_reason = "Collision avoided."
+                                agent_reason = "Returning to track line safely."
 
-                            # 5. Append the uniform format cleanly
                             ship.llm_reasoning = f"(Autopilot) {agent_reason.strip()}"
                             ship.llm_decision = {"rudder_deg": float(rudder), "rpm_percent": float(rpm), "reasoning": ship.llm_reasoning}
 
-                            ship.status_state = "RESUME_COURSE"
+                            ship.status_state = "MANEUVER" 
 
                             if abs(heading_error) <= 1.0:
                                 ship.apply_llm_command(0.0, rpm)
                                 ship.in_maneuver = False
-                                ship.status_state = "ON_COURSE"
+                                ship.status_state = "HOLD_COURSE"  # Reset state
 
                         else:
-                            # If we are entering this block, it means the ship is NOT in 'RETURN_TO_COURSE'
-                            # and must consult the LLM because a threat exists or course is held.
-                            # Clear the old autopilot return state if a new threat takes over.
-                            if getattr(ship, 'status_state', None) == "RESUME_COURSE":
-                                ship.status_state = "MANEUVERING"
+                            # If a threat takes over, clear autopilot track state and mark as yield obligation
+                            if getattr(ship, 'status_state', None) == "MANEUVER":
+                                ship.status_state = "MUST_YIELD"
 
                             worker = LLMWorker(coordinator, ship.name, ego_data)
                             worker.result_ready.connect(self.on_llm_result)
@@ -1507,14 +1500,12 @@ class MainWindow(QMainWindow):
             for ship in self.ships:
                 heading_diff = abs((ship.base_heading_deg - ship.get_heading_deg() + 180) % 360 - 180)
                 if heading_diff > 1:
-                    # If the ship is not explicitly under the autopilot return loop, it is maneuvering
-                    if getattr(ship, 'status_state', None) != "RESUME_COURSE":
+                    if getattr(ship, 'status_state', None) != "MANEUVER":
                         ship.in_maneuver = True
+                        ship.status_state = "MUST_YIELD"  # Standard dynamic condition under LLM tracking
                 else:
-                    
-                    # Clear the maneuvering and return states once course is stable
                     ship.in_maneuver = False
-                    ship.status_state = "ON_COURSE"
+                    ship.status_state = "HOLD_COURSE"
                     
                 ship.update(self.dt)
                 self.log_ship_state(ship)

@@ -70,20 +70,15 @@ def check_rule_14(ship1, ship2, settings=None):
 def check_rule_13(ship1, ship2, settings=None):
     """
     Rule 13 - Overtaking
-    Overtaking sector: from (180 - threshold) to (180 + threshold)
-    Default: from 112.5 to 247.5 (22.5 degrees abaft the beam)
+    Overtaking sector: from 112.5 to 247.5 degrees abaft the beam of the target vessel
     """
     if settings is None:
         settings = get_rules_settings()
     
-    # Get parameters from settings
-    # bearing_threshold is the angle FROM THE BOW, beyond which the sector begins
-    # Default is 112.5 (i.e., 22.5 degrees abaft the beam)
-    bearing_threshold = settings.get("rule_13_overtaking", "bearing_threshold_deg", 112.5)
     max_distance = settings.get("rule_13_overtaking", "max_distance_m", 5556)
-    speed_ratio = settings.get("rule_13_overtaking", "speed_ratio_threshold", 1.0)
+    bearing_threshold = settings.get("rule_13_overtaking", "bearing_threshold_deg", 112.5)
     
-    # Check distance
+    # 1. Verify distance limit
     dist = np.sqrt((ship2.x - ship1.x)**2 + (ship2.y - ship1.y)**2)
     if dist > max_distance:
         return False, None, None
@@ -91,40 +86,18 @@ def check_rule_13(ship1, ship2, settings=None):
     bearing_1_to_2 = calculate_relative_bearing(ship1, ship2)
     bearing_2_to_1 = calculate_relative_bearing(ship2, ship1)
     
-    # Check speed ratio
-    if ship1.u > 0.1 and ship2.u > 0.1:
-        speed_ratio_actual = max(ship1.u, ship2.u) / min(ship1.u, ship2.u)
-        if speed_ratio_actual < speed_ratio:
-            return False, None, None
-    
-    # Correct validation of the overtaking sector (symmetrical relative to the stern)
-    # Sector: from bearing_threshold to (360 - bearing_threshold)
-    # For threshold=112.5: sector 112.5 - 247.5
     def is_in_overtaking_sector(bearing):
         return bearing_threshold <= bearing <= (360 - bearing_threshold)
     
-    # Check if vessels are closing in
-    v1_x = ship1.u * np.sin(ship1.psi)
-    v1_y = ship1.u * np.cos(ship1.psi)
-    v2_x = ship2.u * np.sin(ship2.psi)
-    v2_y = ship2.u * np.cos(ship2.psi)
-    
-    v_rel_x = v2_x - v1_x
-    v_rel_y = v2_y - v1_y
-    
-    dx = ship2.x - ship1.x
-    dy = ship2.y - ship1.y
-    
-    approaching = (v_rel_x * dx + v_rel_y * dy) < 0
-    
-    # For Rule 13: ship2 must be in the overtaking sector of ship1
-    # (i.e., ship2 is located abaft the beam of ship1)
-    if is_in_overtaking_sector(bearing_1_to_2) and approaching:
-        print("Rule 13 was triggered")
+    # 2. Geometry Dominance: Check if ship1 is physically coming from behind ship2
+    # (Meaning ship1 sees ship2 ahead/traversable, and ship2 sees ship1 abaft its beam)
+    if is_in_overtaking_sector(bearing_2_to_1):
+        print(f"Rule 13 Triggered: {ship1.name} is overtaking {ship2.name} from astern.")
         return True, bearing_1_to_2, bearing_2_to_1
-    
+        
     return False, bearing_1_to_2, bearing_2_to_1
-
+    
+    
 
 def check_rule_15(ship1, ship2, settings=None):
     """
