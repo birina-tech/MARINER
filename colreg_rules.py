@@ -125,7 +125,7 @@ def check_rule_15(ship1, ship2, settings=None):
     return False, None, None
 
 
-def check_rule_17_2(dist_m, cpa_m, tcpa_s, settings=None):
+def check_rule_17_2(ship1, ship2, dist_m, cpa_m, tcpa_s, settings=None):
     """
     Rule 17.2 - Critical convergence (Emergency)
     Uses customizable critical thresholds
@@ -137,10 +137,19 @@ def check_rule_17_2(dist_m, cpa_m, tcpa_s, settings=None):
     critical_cpa = settings.get("rule_17_2_emergency", "critical_cpa_m", 926)
     critical_tcpa = settings.get("rule_17_2_emergency", "critical_tcpa_s", 300)
     critical_distance = settings.get("rule_17_2_emergency", "critical_distance_m", 1852)
-    
+
+    # Check if the situation is already defined by Rule 13
+    is_rule_13, _, _ = check_rule_13(ship1, ship2, settings)
+
     # Check if critical thresholds are breached
-    if dist_m < critical_distance or cpa_m < critical_cpa or tcpa_s < critical_tcpa:
-        return True
+    if dist_m < critical_distance and cpa_m < critical_cpa and tcpa_s < critical_tcpa:
+        if is_rule_13 and dist_m > 800.0:
+            # Rule 17.2 easement for safe overtaking operations:
+            # If identified as Rule 13, and the distance has not yet breached the physical collision extreme (dist > 800m),
+            # prioritize executing the safe pass instead of executing an emergency speed reduction drop via Rule 17.2.
+            return False
+        else:
+            return True
     
     return False
 
@@ -182,11 +191,12 @@ def determine_colreg_situation(ship1, ship2, dist_m, cpa_m, tcpa_s):
     is_rule_13, b1, b2 = check_rule_13(ship1, ship2, settings)
     
     # Check critical convergence state (Rule 17.2)
-    is_emergency = check_rule_17_2(dist_m, cpa_m, tcpa_s, settings)
+    is_emergency = check_rule_17_2(ship1, ship2, dist_m, cpa_m, tcpa_s, settings)
     
     # Rule 17.2 easement for safe overtaking operations:
     # If identified as Rule 13, and the distance has not yet breached the physical collision extreme (dist > 800m),
     # prioritize executing the safe pass instead of executing an emergency speed reduction drop via Rule 17.2.
+
     if is_emergency and not (is_rule_13 and dist_m > 800.0):
         return {
             'rule': '17.2',

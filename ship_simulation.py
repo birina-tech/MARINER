@@ -3,6 +3,7 @@ import os
 import json
 import csv
 from datetime import datetime
+
 import numpy as np
 import warnings
 from autopilot import RouteAutopilot
@@ -18,7 +19,7 @@ from ship import Ship
 from canvas import ShipCanvas
 from dialogs import AddShipDialog, ControlDialog, LLMSettingsDialog
 from llm_worker import LLMWorker
-from collision_analyzer import launch_collision_analysis, CollisionAnalyzer
+from collision_analyzer import launch_collision_analysis, CollisionAnalyzer, determine_colreg_situation
 from llm_controller import LLMCoordinator
 from llm_decisions_window import launch_llm_decisions_window
 from safe_passing_dialog import launch_safe_passing_calculator
@@ -1229,9 +1230,7 @@ class MainWindow(QMainWindow):
         )
 
     def collect_ego_data(self, ego_ship):
-        from colreg_rules import determine_colreg_situation
-        from collision_analyzer import CollisionAnalyzer
-        import numpy as np
+
         
         def get_historical_state(target_time, history):
             if not history: return None
@@ -1258,9 +1257,9 @@ class MainWindow(QMainWindow):
         no_left_turn = False
         all_passed = True
         
-        t_15m = max(0, self.simulation_time - 900)
-        t_10m = max(0, self.simulation_time - 600)
-        t_5m  = max(0, self.simulation_time - 300)
+        t_15m = max(0, self.simulation_time - 900/50) # 15 minutes ago in simulation time
+        t_10m = max(0, self.simulation_time - 600/50)
+        t_5m  = max(0, self.simulation_time - 300/50) 
         
         for other in self.ships:
             if other is ego_ship:
@@ -1275,7 +1274,7 @@ class MainWindow(QMainWindow):
             rule_id = colreg.get('rule', 'None')
             current_severity = RULE_PRIORITY.get(rule_id, 0)
             
-            action = colreg['ship1_action']
+            action = colreg['ship2_action']
             
             # Map out tactical role for this distinct pair
             if 'Give-way' in action or 'Alter' in action or 'Change' in action:
@@ -1335,8 +1334,12 @@ class MainWindow(QMainWindow):
         # Final status assignment based strictly on hierarchical logic dominance
         if dominant_status == 'CRITICAL_CONVERGENCE':
             status = 'MUST_YIELD'  
-        elif max(highest_rule_severity, 0) > 0:
+        elif max(highest_rule_severity, 0) > 3:
             status = 'MUST_YIELD'
+    
+        elif highest_rule_severity > 0 and pair_status == 'HOLD_COURSE': # for Rules 13 and 15 set opposite roles
+            status = 'MUST_YIELD'   
+
         elif all_passed and heading_diff > 1 and ego_ship.in_maneuver:
             status = 'MANEUVER'  # Reserved for tracking course return under no risk
         elif ego_ship.in_maneuver:

@@ -21,7 +21,7 @@ INPUT FORMAT (JSON):
   "speed_ms": 5.0,
   "current_rudder": 0,
   "current_rpm": 50,
-  "status": "MUST_YIELD" | "HOLD_COURSE" | "MANEUVER",
+  "status": "MUST_YIELD" | "HOLD_COURSE" | "MANEUVER" | 'CRITICAL_CONVERGENCE',
   "no_left_turn": true | false,
   "in_maneuver": true | false,
   "autopilot_enabled": true | false,

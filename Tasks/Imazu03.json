@@ -3,7 +3,7 @@
     {
       "name": "Follower",
       "x": 1.0,
-      "y": -5000.0,
+      "y": -2500.0,
       "course_deg": 0.0,
       "speed_ms": 3.0,
       "rudder_deg": 0.0,
@@ -14,11 +14,11 @@
     {
       "name": "Leader",
       "x": 0.0,
-      "y": 3000.0,
+      "y": 2500.0,
       "course_deg": 0.0,
       "speed_ms": 3.0,
       "rudder_deg": 0.0,
-      "rpm_percent": 30.0,
+      "rpm_percent": 20.0,
       "llm_controlled": false,
       "assigned_route": "Route_Leader"
     }
