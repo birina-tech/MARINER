@@ -1231,6 +1231,7 @@ class MainWindow(QMainWindow):
     def collect_ego_data(self, ego_ship):
         from colreg_rules import determine_colreg_situation
         from collision_analyzer import CollisionAnalyzer
+        import numpy as np
         
         def get_historical_state(target_time, history):
             if not history: return None
@@ -1241,7 +1242,19 @@ class MainWindow(QMainWindow):
 
         analyzer = CollisionAnalyzer()
         pairs_info = []
-        must_yield = False
+        
+        # Priority mapping for rule weights (higher values indicate greater navigational urgency)
+        RULE_PRIORITY = {
+            '17.2': 5,     # Critical Convergence / Emergency
+            '14': 4,       # Head-on
+            '15': 3,       # Crossing
+            '13': 2,       # Overtaking
+            'None': 0,     # Safe Status
+            'Unknown': 0
+        }
+        
+        highest_rule_severity = 0
+        dominant_status = 'HOLD_COURSE'
         no_left_turn = False
         all_passed = True
         
@@ -1259,16 +1272,31 @@ class MainWindow(QMainWindow):
                 cpa_data['dist'], cpa_data['DCPA'], cpa_data['TCPA']
             )
             
-            action = colreg['ship1_action']
-            if 'Give-way' in action or 'Alter' in action or 'Change' in action:
-                role = 'GIVE_WAY'
-                must_yield = True
-            elif 'Stand on' in action:
-                role = 'STAND_ON'
-            else:
-                role = 'BOTH_ALTER'
-                must_yield = True
+            rule_id = colreg.get('rule', 'None')
+            current_severity = RULE_PRIORITY.get(rule_id, 0)
             
+            action = colreg['ship1_action']
+            
+            # Map out tactical role for this distinct pair
+            if 'Give-way' in action or 'Alter' in action or 'Change' in action:
+                pair_role = 'GIVE_WAY'
+                pair_status = 'MUST_YIELD'
+            elif 'Stand on' in action:
+                pair_role = 'STAND_ON'
+                pair_status = 'HOLD_COURSE'
+            else:
+                pair_role = 'BOTH_ALTER'
+                pair_status = 'MUST_YIELD'
+                
+            # If this vessel is in an emergency under 17.2, override pair status explicitly
+            if rule_id == '17.2':
+                pair_status = 'CRITICAL_CONVERGENCE'
+
+            # Evaluates if the current interaction dict overrides the previous dominant rule threat
+            if current_severity > highest_rule_severity:
+                highest_rule_severity = current_severity
+                dominant_status = pair_status
+
             crossing = analyzer.calculate_course_crossing(ego_ship, other)
             crosses_ahead = None
             if crossing['crossing_type']:
@@ -1277,7 +1305,8 @@ class MainWindow(QMainWindow):
                 elif crossing['crosses_2_by_1']:
                     crosses_ahead = f"{ego_ship.name} crosses {other.name} ahead"
             
-            if role == 'GIVE_WAY' and crosses_ahead and f"{other.name} crosses" in crosses_ahead:
+            # Starboard turn constraint safeguard rule
+            if pair_role == 'GIVE_WAY' and crosses_ahead and f"{other.name} crosses" in crosses_ahead:
                 no_left_turn = True
             
             tcpa_val = cpa_data['TCPA']
@@ -1292,8 +1321,8 @@ class MainWindow(QMainWindow):
 
             pairs_info.append({
                 'other_ship': other.name,
-                'rule': colreg['rule'],
-                'role': role,
+                'rule': rule_id,
+                'role': pair_role,
                 'cpa_m': float(cpa_data['DCPA']),
                 'tcpa_s': float(cpa_data['TCPA']) if not np.isinf(cpa_data['TCPA']) else 99999.0,
                 'crosses_ahead': crosses_ahead,
@@ -1302,12 +1331,14 @@ class MainWindow(QMainWindow):
 
         current_heading = ego_ship.get_heading_deg()
         heading_diff = abs((ego_ship.base_heading_deg - current_heading + 180) % 360 - 180)
-        returning = all_passed and heading_diff > 1 and ego_ship.in_maneuver
         
-        if returning:
-            status = 'RETURN_TO_COURSE'
-        elif must_yield:
+        # Final status assignment based strictly on hierarchical logic dominance
+        if dominant_status == 'CRITICAL_CONVERGENCE':
+            status = 'MUST_YIELD'  # Kept as MUST_YIELD for LLM vocabulary parsing match, but prioritized
+        elif max(highest_rule_severity, 0) > 0:
             status = 'MUST_YIELD'
+        elif all_passed and heading_diff > 1 and ego_ship.in_maneuver:
+            status = 'RETURN_TO_COURSE'
         elif ego_ship.in_maneuver:
             status = 'MANEUVERING'    
         else:

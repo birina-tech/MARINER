@@ -1,7 +1,7 @@
 """
 colreg_rules.py
-Определение правил МППСС на основе относительных пеленгов
-С интегрированными настраиваемыми параметрами
+Determination of COLREGs rules based on relative bearings
+With integrated customizable parameters
 """
 import numpy as np
 from rules_settings import get_rules_settings
@@ -9,10 +9,10 @@ from rules_settings import get_rules_settings
 
 def calculate_relative_bearing(ship1, ship2):
     """
-    Рассчитать ОТНОСИТЕЛЬНЫЙ пеленг с ship1 на ship2
-    Отсчитывается от курса ship1 (носа судна) по часовой стрелке 0-360 
+    Calculate the RELATIVE bearing from ship1 to ship2
+    Measured from ship1's heading (vessel's bow) clockwise from 0 to 360 degrees
     """
-    # Истинный пеленг на ship2 (от севера)
+    # True bearing to ship2 (from North)
     dx = ship2.x - ship1.x
     dy = ship2.y - ship1.y
     true_bearing_rad = np.arctan2(dx, dy)
@@ -20,15 +20,15 @@ def calculate_relative_bearing(ship1, ship2):
     if true_bearing_deg < 0:
         true_bearing_deg += 360
     
-    # Курс ship1 в градусах (0-360)
+    # ship1 course in degrees (0-360)
     ship1_course_deg = np.degrees(ship1.psi)
     if ship1_course_deg < 0:
         ship1_course_deg += 360
     
-    # Относительный пеленг = истинный пеленг - курс судна
+    # Relative bearing = true bearing - vessel course
     relative_bearing = true_bearing_deg - ship1_course_deg
     
-    # Нормализовать к 0-360
+    # Normalize to 0-360
     if relative_bearing < 0:
         relative_bearing += 360
     elif relative_bearing >= 360:
@@ -39,17 +39,17 @@ def calculate_relative_bearing(ship1, ship2):
 
 def check_rule_14(ship1, ship2, settings=None):
     """
-    Правило 14 - Встречная ситуация
-    Использует настраиваемый порог пеленга
+    Rule 14 - Head-on situation
+    Uses a customizable bearing threshold
     """
     if settings is None:
         settings = get_rules_settings()
     
-    # Получаем порог из настроек (в градусах)
+    # Get threshold from settings (in degrees)
     bearing_threshold = settings.get("rule_14_head_on", "bearing_threshold_deg", 5.0)
     max_distance = settings.get("rule_14_head_on", "max_distance_m", 5556)
     
-    # Проверяем дистанцию
+    # Check distance
     dist = np.sqrt((ship2.x - ship1.x)**2 + (ship2.y - ship1.y)**2)
     if dist > max_distance:
         return False, None, None
@@ -58,7 +58,7 @@ def check_rule_14(ship1, ship2, settings=None):
     bearing_2_to_1 = calculate_relative_bearing(ship2, ship1)
     
     def is_in_head_on_range(bearing):
-        # Проверяем, находится ли пеленг в диапазоне ±threshold от 0 (или 360)
+        # Check if bearing is within ±threshold from 0 (or 360)
         return bearing <= bearing_threshold or bearing >= (360 - bearing_threshold)
     
     if is_in_head_on_range(bearing_1_to_2) and is_in_head_on_range(bearing_2_to_1):
@@ -69,21 +69,21 @@ def check_rule_14(ship1, ship2, settings=None):
 
 def check_rule_13(ship1, ship2, settings=None):
     """
-    Правило 13 - Обгон
-    Сектор обгона: от (180 - threshold) до (180 + threshold)
-    По умолчанию: от 112.5 до 247.5 (22.5 позади траверза)
+    Rule 13 - Overtaking
+    Overtaking sector: from (180 - threshold) to (180 + threshold)
+    Default: from 112.5 to 247.5 (22.5 degrees abaft the beam)
     """
     if settings is None:
         settings = get_rules_settings()
     
-    # Получаем параметры из настроек
-    # bearing_threshold - это угол ОТ НОСА, за которым начинается сектор
-    # По умолчанию 112.5 (т.е. 22.5 позади траверза)
+    # Get parameters from settings
+    # bearing_threshold is the angle FROM THE BOW, beyond which the sector begins
+    # Default is 112.5 (i.e., 22.5 degrees abaft the beam)
     bearing_threshold = settings.get("rule_13_overtaking", "bearing_threshold_deg", 112.5)
     max_distance = settings.get("rule_13_overtaking", "max_distance_m", 5556)
     speed_ratio = settings.get("rule_13_overtaking", "speed_ratio_threshold", 1.0)
     
-    # Проверяем дистанцию
+    # Check distance
     dist = np.sqrt((ship2.x - ship1.x)**2 + (ship2.y - ship1.y)**2)
     if dist > max_distance:
         return False, None, None
@@ -91,19 +91,19 @@ def check_rule_13(ship1, ship2, settings=None):
     bearing_1_to_2 = calculate_relative_bearing(ship1, ship2)
     bearing_2_to_1 = calculate_relative_bearing(ship2, ship1)
     
-    # Проверяем соотношение скоростей
+    # Check speed ratio
     if ship1.u > 0.1 and ship2.u > 0.1:
         speed_ratio_actual = max(ship1.u, ship2.u) / min(ship1.u, ship2.u)
         if speed_ratio_actual < speed_ratio:
             return False, None, None
     
-    # ПРАВИЛЬНАЯ проверка сектора обгона (симметричного относительно кормы)
-    # Сектор: от bearing_threshold до (360 - bearing_threshold)
-    # Для threshold=112.5: сектор 112.5 - 247.5
+    # Correct validation of the overtaking sector (symmetrical relative to the stern)
+    # Sector: from bearing_threshold to (360 - bearing_threshold)
+    # For threshold=112.5: sector 112.5 - 247.5
     def is_in_overtaking_sector(bearing):
         return bearing_threshold <= bearing <= (360 - bearing_threshold)
     
-    # Проверяем, сближаются ли суда
+    # Check if vessels are closing in
     v1_x = ship1.u * np.sin(ship1.psi)
     v1_y = ship1.u * np.cos(ship1.psi)
     v2_x = ship2.u * np.sin(ship2.psi)
@@ -117,8 +117,8 @@ def check_rule_13(ship1, ship2, settings=None):
     
     approaching = (v_rel_x * dx + v_rel_y * dy) < 0
     
-    # Для Rule 13: ship2 должен быть в секторе обгона ship1
-    # (т.е. ship2 находится позади траверза ship1)
+    # For Rule 13: ship2 must be in the overtaking sector of ship1
+    # (i.e., ship2 is located abaft the beam of ship1)
     if is_in_overtaking_sector(bearing_1_to_2) and approaching:
         print("Rule 13 was triggered")
         return True, bearing_1_to_2, bearing_2_to_1
@@ -128,18 +128,18 @@ def check_rule_13(ship1, ship2, settings=None):
 
 def check_rule_15(ship1, ship2, settings=None):
     """
-    Правило 15 - Пересечение курсов
+    Rule 15 - Crossing situation
     """
     if settings is None:
         settings = get_rules_settings()
     
-    # Проверяем, не является ли ситуация Rule 14 или Rule 13
+    # Check if the situation is already defined by Rule 14 or Rule 13
     is_rule_14, _, _ = check_rule_14(ship1, ship2, settings)
     is_rule_13, _, _ = check_rule_13(ship1, ship2, settings)
     
     max_distance = settings.get("rule_15_crossing", "max_distance_m", 5556)
     
-    # Проверяем дистанцию
+    # Check distance
     dist = np.sqrt((ship2.x - ship1.x)**2 + (ship2.y - ship1.y)**2)
     if dist > max_distance:
         return False, None, None
@@ -154,18 +154,18 @@ def check_rule_15(ship1, ship2, settings=None):
 
 def check_rule_17_2(dist_m, cpa_m, tcpa_s, settings=None):
     """
-    Правило 17.2 - Критическое сближение
-    Использует настраиваемые критические значения
+    Rule 17.2 - Critical convergence (Emergency)
+    Uses customizable critical thresholds
     """
     if settings is None:
         settings = get_rules_settings()
     
-    # Получаем критические значения из настроек
+    # Get critical values from settings
     critical_cpa = settings.get("rule_17_2_emergency", "critical_cpa_m", 926)
     critical_tcpa = settings.get("rule_17_2_emergency", "critical_tcpa_s", 300)
     critical_distance = settings.get("rule_17_2_emergency", "critical_distance_m", 1852)
     
-    # Проверяем, превышены ли критические пороги
+    # Check if critical thresholds are breached
     if dist_m < critical_distance or cpa_m < critical_cpa or tcpa_s < critical_tcpa:
         return True
     
@@ -174,18 +174,18 @@ def check_rule_17_2(dist_m, cpa_m, tcpa_s, settings=None):
 
 def check_normal_conditions(dist_m, cpa_m, tcpa_s, settings=None):
     """
-    Проверка нормальных условий для применения правил 13, 14, 15
-    Использует настраиваемые пороги
+    Check normal conditions for applying Rules 13, 14, 15
+    Uses customizable thresholds
     """
     if settings is None:
         settings = get_rules_settings()
     
-    # Получаем пороги из настроек
+    # Get thresholds from settings
     min_cpa = settings.get("general", "min_cpa_for_risk_m", 1852)
     min_tcpa = settings.get("general", "min_tcpa_for_risk_s", 600)
     detection_range = settings.get("general", "detection_range_m", 9260)
     
-    # Проверяем, находится ли ситуация в пределах анализа
+    # Check if the encounter falls within the analytical thresholds
     if dist_m <= detection_range and cpa_m < min_cpa and tcpa_s < min_tcpa:
         print("Normal conditions applies")
         return True
@@ -195,18 +195,26 @@ def check_normal_conditions(dist_m, cpa_m, tcpa_s, settings=None):
 
 def determine_colreg_situation(ship1, ship2, dist_m, cpa_m, tcpa_s):
     """
-    Определить ситуацию МППСС для пары судов
-    Использует настраиваемые параметры из rules_settings
+    Determine the COLREGs situation for a pair of vessels
+    Uses customizable parameters from rules_settings 
     """
-    # Получаем настройки
+    # Load settings
     settings = get_rules_settings()
     
-    # Пеленги вычисляются ВСЕГДА
+    # Bearings are ALWAYS calculated
     bearing_1_to_2 = calculate_relative_bearing(ship1, ship2)
     bearing_2_to_1 = calculate_relative_bearing(ship2, ship1)
     
-    # Проверка критического сближения (правило 17.2)
-    if check_rule_17_2(dist_m, cpa_m, tcpa_s, settings):
+    # First check if the encounter is an overtaking situation (Rule 13)
+    is_rule_13, b1, b2 = check_rule_13(ship1, ship2, settings)
+    
+    # Check critical convergence state (Rule 17.2)
+    is_emergency = check_rule_17_2(dist_m, cpa_m, tcpa_s, settings)
+    
+    # Rule 17.2 easement for safe overtaking operations:
+    # If identified as Rule 13, and the distance has not yet breached the physical collision extreme (dist > 800m),
+    # prioritize executing the safe pass instead of executing an emergency speed reduction drop via Rule 17.2.
+    if is_emergency and not (is_rule_13 and dist_m > 800.0):
         return {
             'rule': '17.2',
             'situation': 'Critical convergence (Emergency)',
@@ -221,19 +229,16 @@ def determine_colreg_situation(ship1, ship2, dist_m, cpa_m, tcpa_s):
             }
         }
     
-
-    
-    # Проверка правила 13 (обгон)
-    is_rule_13, b1, b2 = check_rule_13(ship1, ship2, settings)
+    # Check Rule 13 (Overtaking)
     if is_rule_13:
-        # Определяем, какое судно обгоняет
+        # Determine which vessel is performing the overtake
         if ship2.u > ship1.u:
             overtaking_ship = ship2.name
             ship1_action = 'Stand on (Rule 17.1)'
-            ship2_action = 'Give-way (Rule 16)'
+            ship2_action = 'Give-way (Rule 16) - Overtake Starboard'
         else:
             overtaking_ship = ship1.name
-            ship1_action = 'Give-way (Rule 16)'
+            ship1_action = 'Give-way (Rule 16) - Overtake Starboard'
             ship2_action = 'Stand on (Rule 17.1)'
         
         return {
@@ -250,7 +255,8 @@ def determine_colreg_situation(ship1, ship2, dist_m, cpa_m, tcpa_s):
                 'overtaking_ship': overtaking_ship
             }
         }
-    # Проверка правила 14 (встречная)
+
+    # Check Rule 14 (Head-on)
     is_rule_14, b1, b2 = check_rule_14(ship1, ship2, settings)
     if is_rule_14:
         return {
@@ -267,12 +273,11 @@ def determine_colreg_situation(ship1, ship2, dist_m, cpa_m, tcpa_s):
             }
         }
 
-
-    # Проверка правила 15 (пересечение)
+    # Check Rule 15 (Crossing)
     is_rule_15, b1, b2 = check_rule_15(ship1, ship2, settings)
     if is_rule_15:
         def is_stand_on(bearing):
-            # Судно сохраняет курс, если другое судно у него по правому борту (10-110)
+            # Vessel stands on if the other vessel is on its starboard side (10 to 110 degrees)
             return 10 <= bearing <= 110
         
         ship1_stand_on = is_stand_on(bearing_2_to_1)
@@ -298,8 +303,7 @@ def determine_colreg_situation(ship1, ship2, dist_m, cpa_m, tcpa_s):
             }
         }
 
-
-    # Проверка нормальных условий
+    # Check normal risk evaluation thresholds conditions
     if not check_normal_conditions(dist_m, cpa_m, tcpa_s, settings):
         return {
             'rule': 'None',
@@ -311,9 +315,6 @@ def determine_colreg_situation(ship1, ship2, dist_m, cpa_m, tcpa_s):
                 'bearing_2_to_1': bearing_2_to_1,
             }
         }
-
-
-
 
     return {
         'rule': 'Unknown',
