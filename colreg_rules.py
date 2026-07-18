@@ -41,81 +41,186 @@ def check_rule_14(ship1, ship2, settings=None):
     """
     Rule 14 - Head-on situation
     Uses a customizable bearing threshold
+    The relative bearing from Vessel 1 to Vessel 2 is within the range of 350 to 10 degrees (passing through 0).
+    AND
+    The relative bearing from Vessel 2 to Vessel 1 is within the range of 350 to 10 degrees (passing through 0/360).
+    AND
+    The distance between the vessels is less than 12 miles.
+    AND     
+    CPA < 2 nm.
+    AND
+    TCPA < 30 min.
     """
     if settings is None:
         settings = get_rules_settings()
     
-    # Get threshold from settings (in degrees)
-    bearing_threshold = settings.get("rule_14_head_on", "bearing_threshold_deg", 5.0)
-    max_distance = settings.get("rule_14_head_on", "max_distance_m", 5556)
-    
-    # Check distance
+
+    ### Fetch  parameter keys matching rules_settings
+    bound_low = settings.get("rule_14_head_on", "bearing_bound_low_deg", 350.0)
+    bound_high = settings.get("rule_14_head_on", "bearing_bound_high_deg", 10.0)
+    max_dist = settings.get("rule_14_head_on", "max_distance_m", 22224.0)
+    max_cpa = settings.get("rule_14_head_on", "max_cpa_m", 3704.0)
+    max_tcpa = settings.get("rule_14_head_on", "max_tcpa_s", 1800.0)
+
+    ### Calculate standard physical distance
     dist = np.sqrt((ship2.x - ship1.x)**2 + (ship2.y - ship1.y)**2)
-    if dist > max_distance:
+    if dist >= max_dist:
         return False, None, None
     
+
+    ### Analyzer and calculate cpa_data to prevent NameError crash
+    from collision_analyzer import CollisionAnalyzer
+    analyzer = CollisionAnalyzer()
+    cpa_data = analyzer.calculate_cpa_tcpa(ship1, ship2)
+
+
+    ### Enforce mathematical CPA and TCPA limit blocks
+    if cpa_data['DCPA'] >= max_cpa or cpa_data['TCPA'] >= max_tcpa:
+        return False, None, None
+
     bearing_1_to_2 = calculate_relative_bearing(ship1, ship2)
     bearing_2_to_1 = calculate_relative_bearing(ship2, ship1)
+
+    def is_heading_within_bounds(bearing):
+        ### Verify if relative angle passes through 0/360 sector bounds
+        return bearing >= bound_low or bearing <= bound_high
     
-    def is_in_head_on_range(bearing):
-        # Check if bearing is within ±threshold from 0 (or 360)
-        return bearing <= bearing_threshold or bearing >= (360 - bearing_threshold)
-    
-    if is_in_head_on_range(bearing_1_to_2) and is_in_head_on_range(bearing_2_to_1):
+    if is_heading_within_bounds(bearing_1_to_2) and is_heading_within_bounds(bearing_2_to_1):
         return True, bearing_1_to_2, bearing_2_to_1
     
     return False, bearing_1_to_2, bearing_2_to_1
+   
 
 
 def check_rule_13(ship1, ship2, settings=None):
     """
     Rule 13 - Overtaking
-    Overtaking sector: from 112.5 to 247.5 degrees abaft the beam of the target vessel
+    ######
+    Case 1: 
+    1.1. The relative bearing from one vessel to the other was within the range of 110 to 250 degrees.
+    AND
+    1.2. The relative bearing from the second vessel to the first is from 270 to 90 degrees (passing through 0/360).
+    AND
+    1.3. The vessels are closing in (think about how to verify this).
+    AND
+    1.4. TCPA < 120 min.
+    AND
+    1.5. CPA < 2 nm.
+    AND
+    1.6. The distance between the vessels is less than 6 miles.
+    ######
+    OR
+    ######
+    Case 2:
+    2.1. The relative bearing from the second vessel to the first was within the range of 110 to 250 degrees.
+    AND
+    2.2. The relative bearing from the first vessel to the second is from 270 to 90 degrees (passing through 0/360).
+    AND
+    2.3. The vessels are closing in (think about how to verify this).
+    AND
+    2.4. TCPA < 120 min.
+    AND
+    2.5. CPA < 2 nm.
+    AND
+    2.6. The distance between the vessels is less than 6 miles.
     """
     if settings is None:
         settings = get_rules_settings()
     
-    max_distance = settings.get("rule_13_overtaking", "max_distance_m", 5556)
-    bearing_threshold = settings.get("rule_13_overtaking", "bearing_threshold_deg", 112.5)
-    
-    # 1. Verify distance limit
+
+    ### Extract updated exact parameter keys matching definitions
+    min_overtaken = settings.get("rule_13_overtaking", "min_overtaken_bearing_deg", 110.0)
+    max_overtaken = settings.get("rule_13_overtaking", "max_overtaken_bearing_deg", 250.0)
+    min_overtaker = settings.get("rule_13_overtaking", "min_overtaker_bearing_deg", 270.0)
+    max_overtaker = settings.get("rule_13_overtaking", "max_overtaker_bearing_deg", 90.0)
+    max_dist = settings.get("rule_13_overtaking", "max_distance_m", 11112.0)
+    max_cpa = settings.get("rule_13_overtaking", "max_cpa_m", 3704.0)
+    max_tcpa = settings.get("rule_13_overtaking", "max_tcpa_s", 7200.0)
+
+
     dist = np.sqrt((ship2.x - ship1.x)**2 + (ship2.y - ship1.y)**2)
-    if dist > max_distance:
+    if dist >= max_dist:
         return False, None, None
+        
+    from collision_analyzer import CollisionAnalyzer
+    analyzer = CollisionAnalyzer()
+    cpa_data = analyzer.calculate_cpa_tcpa(ship1, ship2)
     
+    if cpa_data['DCPA'] >= max_cpa or cpa_data['TCPA'] >= max_tcpa:
+        return False, None, None
+        
     bearing_1_to_2 = calculate_relative_bearing(ship1, ship2)
     bearing_2_to_1 = calculate_relative_bearing(ship2, ship1)
-    
-    def is_in_overtaking_sector(bearing):
-        return bearing_threshold <= bearing <= (360 - bearing_threshold)
-    
-    # 2. Geometry Dominance: Check if ship1 is physically coming from behind ship2
-    # (Meaning ship1 sees ship2 ahead/traversable, and ship2 sees ship1 abaft its beam)
-    if is_in_overtaking_sector(bearing_2_to_1):
-        print(f"Rule 13 Triggered: {ship1.name} is overtaking {ship2.name} from astern.")
+
+
+    ### Check if vessels are actively closing in on each other using kinematic dot products
+    v1_x = ship1.u * np.sin(ship1.psi)
+    v1_y = ship1.u * np.cos(ship1.psi)
+    v2_x = ship2.u * np.sin(ship2.psi)
+    v2_y = ship2.u * np.cos(ship2.psi)
+    v_rel_x = v2_x - v1_x
+    v_rel_y = v2_y - v1_y
+    dx = ship2.x - ship1.x
+    dy = ship2.y - ship1.y
+    closing_in = (v_rel_x * dx + v_rel_y * dy) < 0
+
+    if not closing_in:
+        return False, bearing_1_to_2, bearing_2_to_1
+
+    def is_within_overtaken_cone(bearing):
+        return min_overtaken <= bearing <= max_overtaken
+
+    def is_within_overtaker_cone(bearing):
+        return bearing >= min_overtaker or bearing <= max_overtaker
+
+    ### Case 1 execution: ship1 is overtaking ship2 from behind
+    if is_within_overtaken_cone(bearing_2_to_1) and is_within_overtaker_cone(bearing_1_to_2):
+        return True, bearing_1_to_2, bearing_2_to_1
+
+    ### Case 2 execution: ship2 is overtaking ship1 from behind
+    if is_within_overtaken_cone(bearing_1_to_2) and is_within_overtaker_cone(bearing_2_to_1):
         return True, bearing_1_to_2, bearing_2_to_1
         
-    return False, bearing_1_to_2, bearing_2_to_1
+    return False, bearing_1_to_2, bearing_2_to_1  
     
-    
+  
+   
 
 def check_rule_15(ship1, ship2, settings=None):
     """
     Rule 15 - Crossing situation
+    CPA < 2 nm.
+    AND
+    TCPA < 30 min.
+    AND
+    Rule 14 does not apply.
+    AND
+    Rule 13 does not apply.
+    AND
+    The distance between the vessels is less than 12 miles.
     """
     if settings is None:
         settings = get_rules_settings()
     
-    # Check if the situation is already defined by Rule 14 or Rule 13
+
+    max_dist = settings.get("rule_15_crossing", "max_distance_m", 22224.0)
+    max_cpa = settings.get("rule_15_crossing", "max_cpa_m", 3704.0)
+    max_tcpa = settings.get("rule_15_crossing", "max_tcpa_s", 1800.0)
+    
+    dist = np.sqrt((ship2.x - ship1.x)**2 + (ship2.y - ship1.y)**2)
+    if dist >= max_dist:
+        return False, None, None
+        
+    from collision_analyzer import CollisionAnalyzer
+    analyzer = CollisionAnalyzer()
+    cpa_data = analyzer.calculate_cpa_tcpa(ship1, ship2)
+
+
+    if cpa_data['DCPA'] >= max_cpa or cpa_data['TCPA'] >= max_tcpa:
+        return False, None, None
+    
     is_rule_14, _, _ = check_rule_14(ship1, ship2, settings)
     is_rule_13, _, _ = check_rule_13(ship1, ship2, settings)
-    
-    max_distance = settings.get("rule_15_crossing", "max_distance_m", 5556)
-    
-    # Check distance
-    dist = np.sqrt((ship2.x - ship1.x)**2 + (ship2.y - ship1.y)**2)
-    if dist > max_distance:
-        return False, None, None
     
     if not is_rule_14 and not is_rule_13:
         bearing_1_to_2 = calculate_relative_bearing(ship1, ship2)
@@ -128,27 +233,50 @@ def check_rule_15(ship1, ship2, settings=None):
 def check_rule_17_2(ship1, ship2, dist_m, cpa_m, tcpa_s, settings=None):
     """
     Rule 17.2 - Critical convergence (Emergency)
-    Uses customizable critical thresholds
+    ####
+    Case 1:
+    .1. Rule 13 exists.
+    AND
+    1.2. The distance between the vessels is less than 0.5 miles.
+    AND
+    1.3. CPA < 0.1 nm.
+    AND
+    1.4. TCPA < 15 min.
+    #####
+    OR
+    #####
+    Case 2:
+    2.1. The distance between the vessels is less than 1 mile.
+    AND
+    2.2. CPA < 0.2 nm.
+    AND
+    2.3. TCPA < 10 min.
+    AND
+    2.4. Rule 13 does not apply.
     """
     if settings is None:
         settings = get_rules_settings()
     
-    # Get critical values from settings
-    critical_cpa = settings.get("rule_17_2_emergency", "critical_cpa_m", 926)
-    critical_tcpa = settings.get("rule_17_2_emergency", "critical_tcpa_s", 300)
-    critical_distance = settings.get("rule_17_2_emergency", "critical_distance_m", 1852)
+    ### Load  new multi-case tracking configurations from parameters handle
+    c1_dist = settings.get("rule_17_2_emergency", "case_1_max_distance_m", 926.0)
+    c1_cpa = settings.get("rule_17_2_emergency", "case_1_max_cpa_m", 185.2)
+    c1_tcpa = settings.get("rule_17_2_emergency", "case_1_max_tcpa_s", 900.0)
+    
+    c2_dist = settings.get("rule_17_2_emergency", "case_2_max_distance_m", 1852.0)
+    c2_cpa = settings.get("rule_17_2_emergency", "case_2_max_cpa_m", 370.4)
+    c2_tcpa = settings.get("rule_17_2_emergency", "case_2_max_tcpa_s", 600.0)
 
-    # Check if the situation is already defined by Rule 13
     is_rule_13, _, _ = check_rule_13(ship1, ship2, settings)
+    
+    
+    ### Evaluates Case 1 tracking conditions: Rule 13 is currently active
+    if is_rule_13:
+        if dist_m < c1_dist and cpa_m < c1_cpa and tcpa_s < c1_tcpa:
+            return True
 
-    # Check if critical thresholds are breached
-    if dist_m < critical_distance and cpa_m < critical_cpa and tcpa_s < critical_tcpa:
-        if is_rule_13 and dist_m > 800.0:
-            # Rule 17.2 easement for safe overtaking operations:
-            # If identified as Rule 13, and the distance has not yet breached the physical collision extreme (dist > 800m),
-            # prioritize executing the safe pass instead of executing an emergency speed reduction drop via Rule 17.2.
-            return False
-        else:
+    ### Evaluates Case 2 tracking conditions: Rule 13 is not active
+    else:
+        if dist_m < c2_dist and cpa_m < c2_cpa and tcpa_s < c2_tcpa:
             return True
     
     return False
@@ -163,9 +291,9 @@ def check_normal_conditions(dist_m, cpa_m, tcpa_s, settings=None):
         settings = get_rules_settings()
     
     # Get thresholds from settings
-    min_cpa = settings.get("general", "min_cpa_for_risk_m", 1852)
-    min_tcpa = settings.get("general", "min_tcpa_for_risk_s", 600)
-    detection_range = settings.get("general", "detection_range_m", 9260)
+    min_cpa = settings.get("general", "min_cpa_for_risk_m", 3704.0) # 2 nm * 1852m
+    min_tcpa = settings.get("general", "min_tcpa_for_risk_s", 7200.0) # 120 minutes * 60s
+    detection_range = settings.get("general", "detection_range_m", 22224.0)  # 12 nm * 1852m
     
     # Check if the encounter falls within the analytical thresholds
     if dist_m <= detection_range and cpa_m < min_cpa and tcpa_s < min_tcpa:
@@ -197,7 +325,7 @@ def determine_colreg_situation(ship1, ship2, dist_m, cpa_m, tcpa_s):
     # If identified as Rule 13, and the distance has not yet breached the physical collision extreme (dist > 800m),
     # prioritize executing the safe pass instead of executing an emergency speed reduction drop via Rule 17.2.
 
-    if is_emergency and not (is_rule_13 and dist_m > 800.0):
+    if is_emergency:
         return {
             'rule': '17.2',
             'situation': 'Critical convergence (Emergency)',

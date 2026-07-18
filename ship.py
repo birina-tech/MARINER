@@ -49,6 +49,11 @@ class Ship:
         
         # Initialize an empty list to store historical snapshots
         self.trajectory_history = []
+        
+        ### Track running set of active rules persistent until TCPA <= 0
+        self.active_rules = {}  # Format: { "OtherShipName": set(["13", "14"]) }
+
+
 
     def update(self, dt):
         tau_c = np.clip(self.rudder_cmd * np.pi / 180 * (20 / 35), -20, 20)

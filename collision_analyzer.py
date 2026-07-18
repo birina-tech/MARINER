@@ -140,7 +140,7 @@ class CollisionAnalysisWindow(QMainWindow):
         scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
 
         self.table = QTableWidget()
-        self.table.setColumnCount(12)
+        self.table.setColumnCount(13)
         
         ships = self._get_ships()
         self.table.setHorizontalHeaderLabels([
@@ -149,7 +149,8 @@ class CollisionAnalysisWindow(QMainWindow):
             "CPA (m)",
             "TCPA (s)",
             "Risk",
-            "Rule #",
+            "Dominant Rule", 
+            "Other Active Rules",
             "Situation",
             "Bearing 1→2",
             "Bearing 2→1",
@@ -158,6 +159,7 @@ class CollisionAnalysisWindow(QMainWindow):
             f"Action {ships[1].name if len(ships) > 1 else 'Ship2'}"
         ])
 
+      
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.Interactive)
         self.table.setColumnWidth(0, 150)
@@ -251,19 +253,17 @@ class CollisionAnalysisWindow(QMainWindow):
                 for col in range(5):
                     self.table.item(row, col).setBackground(row_color)
 
-                # DYNAMIC RE-FORMATTING FIX FOR RULE # FIELD
-                raw_rule = str(colreg_data.get('rule', 'None'))
-                if raw_rule in ['None', 'Unknown']:
-                    rule_text = "Safe (No Rule)"
-                else:
-                    rule_text = f"Rule {raw_rule}"
+                ### Match fields created inside the split collection engine
+                dominant_display = colreg_data['rule']
                 
-                rule_item = QTableWidgetItem(rule_text)
-                self.table.setItem(row, 5, rule_item)
+                ### Fetch active tracking memory sets mapped from the simulation metadata payload
+                ship_active_set = getattr(ship1, 'active_rules', {}).get(ship2.name, set())
+                other_active_list = [r for r in ship_active_set if r != dominant_display]
+                other_active_display = ", ".join(other_active_list) if other_active_list else "None"
 
-                # Situation Type Text
-                situation_item = QTableWidgetItem(colreg_data['situation'])
-                self.table.setItem(row, 6, situation_item)
+                self.table.setItem(row, 5, QTableWidgetItem(dominant_display))
+                self.table.setItem(row, 6, QTableWidgetItem(other_active_display))
+                self.table.setItem(row, 7, QTableWidgetItem(colreg_data['situation']))
 
                 # Relative Bearings
                 details = colreg_data.get('details', {})
@@ -273,8 +273,8 @@ class CollisionAnalysisWindow(QMainWindow):
                 b1_str = f"{b_1_2:.0f}°" if b_1_2 is not None else "—"
                 b2_str = f"{b_2_1:.0f}°" if b_2_1 is not None else "—"
                 
-                self.table.setItem(row, 7, QTableWidgetItem(b1_str))
-                self.table.setItem(row, 8, QTableWidgetItem(b2_str))
+                self.table.setItem(row, 8, QTableWidgetItem(b1_str))
+                self.table.setItem(row, 9, QTableWidgetItem(b2_str))
 
                 # Course crossing forecast
                 if crossing_data['crossing_type']:
@@ -282,13 +282,13 @@ class CollisionAnalysisWindow(QMainWindow):
                                   f"(t={min(crossing_data['time_1_to_cross'], crossing_data['time_2_to_cross']):.0f}s)")
                     cross_item = QTableWidgetItem(cross_text)
                     cross_item.setBackground(QColor(255, 220, 220))
-                    self.table.setItem(row, 9, cross_item)
+                    self.table.setItem(row, 10, cross_item)
                 else:
-                    self.table.setItem(row, 9, QTableWidgetItem("No crossing"))
+                    self.table.setItem(row, 10, QTableWidgetItem("No crossing"))
 
                 # Context Action items mapping
-                self.table.setItem(row, 10, QTableWidgetItem(colreg_data['ship1_action']))
-                self.table.setItem(row, 11, QTableWidgetItem(colreg_data['ship2_action']))
+                self.table.setItem(row, 11, QTableWidgetItem(colreg_data['ship1_action']))
+                self.table.setItem(row, 12, QTableWidgetItem(colreg_data['ship2_action']))
                 
                 row += 1
 

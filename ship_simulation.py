@@ -8,6 +8,7 @@ import numpy as np
 import warnings
 from autopilot import RouteAutopilot
 from autopilot_debug_dialog import AutopilotDebugDialog
+import ship
 warnings.filterwarnings("ignore")
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QPushButton, QLabel, QStatusBar,
@@ -1296,6 +1297,31 @@ class MainWindow(QMainWindow):
                 highest_rule_severity = current_severity
                 dominant_status = pair_status
 
+
+            ### --- START RULE MEMORY SECTION ---
+            
+            if other.name not in ego_ship.active_rules:
+                ego_ship.active_rules[other.name] = set()
+
+            tcpa_val = float(cpa_data['TCPA'])
+            dist_val = float(cpa_data['dist'])
+
+            ### Rules are instantly removed only when TCPA is 0 or negative AND distance is 2 nm or more
+            if tcpa_val <= 0.0 and dist_val >= 3704.0:
+                ego_ship.active_rules[other.name].clear()
+            else:
+                ### If any rule is detected right now, it must be kept and stored persistently
+                if rule_id not in ['None', 'Unknown']:
+                    ego_ship.active_rules[other.name].add(rule_id)
+
+            ### Determine the Dominant Rule (currently active and has the highest priority)
+            dominant_rule = rule_id if rule_id not in ['None', 'Unknown'] else 'None'
+
+            ### Other active rules are the remaining rules tracked in the persistent list
+            other_active = [r for r in ego_ship.active_rules[other.name] if r != dominant_rule]
+
+            ### --- END RULE MEMORY SECTION ---
+
             crossing = analyzer.calculate_course_crossing(ego_ship, other)
             crosses_ahead = None
             if crossing['crossing_type']:
@@ -1320,7 +1346,8 @@ class MainWindow(QMainWindow):
 
             pairs_info.append({
                 'other_ship': other.name,
-                'rule': rule_id,
+                'dominant_rule': dominant_rule,
+                'other_active_rules': other_active,
                 'role': pair_role,
                 'cpa_m': float(cpa_data['DCPA']),
                 'tcpa_s': float(cpa_data['TCPA']) if not np.isinf(cpa_data['TCPA']) else 99999.0,
@@ -1331,19 +1358,26 @@ class MainWindow(QMainWindow):
         current_heading = ego_ship.get_heading_deg()
         heading_diff = abs((ego_ship.base_heading_deg - current_heading + 180) % 360 - 180)
         
-        # Final status assignment based strictly on hierarchical logic dominance
+        ### Initialize cross-track distance buffer defaults mapping to the correct ego_ship object
+        is_off_track_distance = False
+        max_allowed_track_deviation_m = 10.0
+    
+        ### Verify cross-track deviation values using the localized ego_ship reference
+        if getattr(ego_ship, 'autopilot_enabled', False) and getattr(ego_ship, 'autopilot', None) is not None:
+            xte_error = abs(ego_ship.autopilot.debug_cross_track)
+            if xte_error > max_allowed_track_deviation_m:
+                is_off_track_distance = True
+
+        ### Execute final status evaluation priority tracking hierarchy
         if dominant_status == 'CRITICAL_CONVERGENCE':
             status = 'MUST_YIELD'  
         elif max(highest_rule_severity, 0) > 3:
             status = 'MUST_YIELD'
-    
-        elif highest_rule_severity > 0 and pair_status == 'HOLD_COURSE': # for Rules 13 and 15 set opposite roles
+        elif highest_rule_severity > 0 and pair_status == 'HOLD_COURSE': 
             status = 'MUST_YIELD'   
-
-        elif all_passed and heading_diff > 1 and ego_ship.in_maneuver:
-            status = 'MANEUVER'  # Reserved for tracking course return under no risk
-        elif ego_ship.in_maneuver:
-            status = 'MUST_YIELD' # If in avoidance maneuver, it is bound by yield constraints   
+        ### If all threats are clear and the ship is off course or off line, force MANEUVER mode immediately
+        elif all_passed and (heading_diff > 1.0 or is_off_track_distance):
+            status = 'MANEUVER'  
         else:
             status = 'HOLD_COURSE'
         
@@ -1471,7 +1505,7 @@ class MainWindow(QMainWindow):
 
                             ship.status_state = "MANEUVER" 
 
-                            if abs(heading_error) <= 1.0:
+                            if abs(heading_error) <= 1.0 and not is_off_track_distance:
                                 ship.apply_llm_command(0.0, rpm)
                                 ship.in_maneuver = False
                                 ship.status_state = "HOLD_COURSE"  # Reset state

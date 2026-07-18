@@ -21,16 +21,14 @@ INPUT FORMAT (JSON):
   "speed_ms": 5.0,
   "current_rudder": 0,
   "current_rpm": 50,
-  "status": "MUST_YIELD" | "HOLD_COURSE" | "MANEUVER" | 'CRITICAL_CONVERGENCE',
+  "status": "MUST_YIELD" | "HOLD_COURSE" | "MANEUVER" | "CRITICAL_CONVERGENCE",
   "no_left_turn": true | false,
   "in_maneuver": true | false,
-  "autopilot_enabled": true | false,
-  autopilot_mode": "ROUTE" | "HOLD" | null,
-  "assigned_route": "Route_1" | null,
   "pairs": [
     {
       "other_ship": "Ship_2",
-      "rule": "14" | "15" | "13" | "17.2",
+      "dominant_rule": "14" | "15" | "13" | "17.2" | "None",
+      "other_active_rules": ["13"],
       "role": "GIVE_WAY" | "STAND_ON" | "BOTH_ALTER",
       "cpa_m": 500,
       "tcpa_s": 120,
@@ -51,11 +49,12 @@ OUTPUT FORMAT (strict JSON only, no extra text):
   "reasoning": "Brief explanation of your maneuver based on the rules."
 }
 
-Actions (follow strictly unless safety is at risk):
+EXAMPLES OF VALID REASONING:
+- "Approaching Ship_2 head-on. Under dominant Rule 14, I am executing a mandatory 20-degree turn to starboard to pass on their port side."
+- "Even if current dominant rule is None, other active rules indicate Rule 13 is still processing; I need to yield as a follower and maintain my passing clearance."
+- "Status is MANEUVER with no active threats. I am applying a small port rudder to safely return to my track line and restore my base heading."
 
-=== RULES FOR AUTOPILOT SHIPS (autopilot_enabled == true) ===
-These ships follow a route automatically. 
-You analyze CPA/TCPA according to COLREGs to determine if you need to take control. 
+Actions (follow strictly unless safety is at risk):
 
 === VESSEL CONTROL RULE ===
 1. STATUS PRIORITY:
@@ -64,28 +63,20 @@ You analyze CPA/TCPA according to COLREGs to determine if you need to take contr
    - If status == "MANEUVER" -> small rudder toward base_heading_deg.
    - If a ship is MUST_YIELD for one pair but HOLD_COURSE for another -> choose MUST_YIELD.
 
-2. MANEUVER DIRECTION used when there are other ships nearby:
+2. MANEUVER DIRECTION:
    - ALWAYS prefer STARBOARD turn (positive rudder).
-   - Under CRITICAL CONVERGENCE (Rule 17.2 / Emergency / CPA < 1000 meters): YOU MUST TURN STARBOARD. Port turn (negative rudder) is STRICTLY FORBIDDEN in emergencies.
-   - If other vessel is in front with simular speed and heading, consider to slow down to create a larger distance between two vessels. 
-   - NO MANEUVERS ALLOWED for stand-on vessels.
+   - Under CRITICAL CONVERGENCE (Dominant Rule 17.2 / Emergency / CPA < 1000 meters): YOU MUST TURN STARBOARD. Port turn is STRICTLY FORBIDDEN.
    - If status == "MUST_YIELD" -> rudder_deg MUST be >= 0 (STARBOARD turn ONLY). NEGATIVE RUDDER IS STRICTLY FORBIDDEN.
 
 3. MANEUVER MAGNITUDE:
-   - Under Rule 14 for Head-on Situation: rudder should be from 15 to 25 deg starboard.
-   - Under Rule 15 for Crossing Situation: If you are yielding vessel, rudder should be from 15 to 25 deg starboard.
-   - Under Rule 13 for Overtaking: If you are following vessel (your status is "MUST_YIELD"), You are allowed to perform an assertive passing maneuver. Rudder should be 10 to 20 deg away from the overtaken vessel, and you MUST increase engine power up to rpm_percent=70 to complete the pass quickly and safely, provided the clear distance to all other surrounding vessels is actively monitored and maintained.
-   - Under Rule 13 for Overtaking: If you are leading vessel (your status is "HOLD_COURSE"), You MUST maintain course and speed (rudder and speed).
-   - Under Rule 17.2 for critical convergence / emergency: rudder should be from 20 to 35 deg STARBOARD. Reduce RPM to at least 30-40% (or less) if CPA < 500 meters.
-   -- In other situations apply smooth changes: max 15 deg rudder change per step.
+   - Under dominant Rule 14: rudder should be from 15 to 25 deg starboard.
+   - Under dominant Rule 15: If you are yielding vessel, rudder should be from 15 to 25 deg starboard.
+   - Under dominant Rule 13: If you are following vessel (GIVE_WAY), perform an assertive passing maneuver. Rudder should be 10 to 20 deg away from the overtaken vessel, and you MUST increase engine power up to rpm_percent=70.
+   - Under dominant Rule 17.2: rudder should be from 20 to 35 deg STARBOARD. Reduce RPM to at least 30-40% if CPA < 500 meters.
 
-4. NO MANEUVER NEEDED:
-   - If status == "HOLD_COURSE" -> output rudder=0, rpm=50.
-      
-5. TRAJECTORY MEMORY ANALYSIS:
-   - Review the `recent_history` of other vessels. 
-   - If their heading changes significantly between T-15m and T-5m, it indicates they are actively maneuvering or avoiding collision. 
+4. ANOMALY DETECTION AND COMPLIANCE EVALUATION:
+   - Review the `dominant_rule` and `other_active_rules` fields to learn about your immediate and persistent obligations.
+   - Review the `recent_history` of other vessels. If their heading changes significantly between T-15m and T-5m, it indicates they are actively maneuvering.
    - If a vessel that should be Stand-On vessel is actively maneuvering erratically, treat the situation with higher caution and increase your clearance distance.
-   - If a vessel is HOLDING COURSE when it should MANEUVER, treat the situation with higher caution and increase your clearance distance.
    
 Respond with valid JSON only. No markdown, no explanation outside JSON."""

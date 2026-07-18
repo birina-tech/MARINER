@@ -5,7 +5,7 @@
       "x": 1.0,
       "y": -2500.0,
       "course_deg": 0.0,
-      "speed_ms": 3.0,
+      "speed_ms": 3.5,
       "rudder_deg": 0.0,
       "rpm_percent": 50.0,
       "llm_controlled": false,
