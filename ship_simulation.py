@@ -1232,7 +1232,6 @@ class MainWindow(QMainWindow):
 
     def collect_ego_data(self, ego_ship):
 
-        
         def get_historical_state(target_time, history):
             if not history: return None
             closest = min(history, key=lambda wp: abs(wp["time"] - target_time))
@@ -1296,7 +1295,6 @@ class MainWindow(QMainWindow):
             if current_severity > highest_rule_severity:
                 highest_rule_severity = current_severity
                 dominant_status = pair_status
-
 
             ### --- START RULE MEMORY SECTION ---
             
@@ -1369,11 +1367,12 @@ class MainWindow(QMainWindow):
                 is_off_track_distance = True
 
         ### Execute final status evaluation priority tracking hierarchy
-        if dominant_status == 'CRITICAL_CONVERGENCE':
-            status = 'MUST_YIELD'  
-        elif max(highest_rule_severity, 0) > 3:
+        # first we check if any active colreg rules (like Rule 14) are engaged anywhere in our threat priority matrix
+        if highest_rule_severity > 0:
             status = 'MUST_YIELD'
-        elif highest_rule_severity > 0 and pair_status == 'HOLD_COURSE': 
+        elif dominant_status == 'CRITICAL_CONVERGENCE':
+            status = 'MUST_YIELD'  
+        elif dominant_status == 'MUST_YIELD':
             status = 'MUST_YIELD'   
         ### If all threats are clear and the ship is off course or off line, force MANEUVER mode immediately
         elif all_passed and (heading_diff > 1.0 or is_off_track_distance):
@@ -1459,17 +1458,35 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"LLM Error: {error_msg[:50]}")
 
     def simulation_step(self):
+        """
+        Executes a single step of the simulation loop, evaluating COLREG conditions,
+        running parallel LLM workers, or triggering local geometric route recovery.
+        """
         if self.running:
+            ### Extract all vessels configured for autonomous AI control
             llm_ships = [s for s in self.ships if s.llm_controlled]
                 
-            if llm_ships and (self.simulation_time - self.last_llm_update >= self.llm_update_interval):
+            ### Trigger decentralized AI evaluation tracking at fixed intervals
+            # use # if some part of the code is temporally commented or if comment is added after the code
+            time_since_last_query = self.simulation_time - self.last_llm_update
+            should_query_llm = time_since_last_query >= self.llm_update_interval
+            
+            if llm_ships:
                 coordinator = self.get_or_create_coordinator()
                     
+                ### Initialize worker registry container if not present
                 if not hasattr(self, 'llm_workers') or self.llm_workers is None:
                     self.llm_workers = {}
                         
                 for ship in llm_ships:
+                    ### Compile situational telemetry for this vessel to inspect state changes
+                    ego_data = self.collect_ego_data(ship)
+                    
+                    # check if a state change from baseline to yield has occurred to trigger immediate updates
+                    is_new_threat = ego_data['status'] == 'MUST_YIELD' and getattr(ship, 'status_state', 'HOLD_COURSE') != 'MUST_YIELD'
+                    
                     worker_active = False
+                    ### Safely inspect thread execution states to block double-allocation
                     if ship.name in self.llm_workers:
                         try:
                             if self.llm_workers[ship.name].isRunning():
@@ -1477,16 +1494,32 @@ class MainWindow(QMainWindow):
                         except RuntimeError:
                             del self.llm_workers[ship.name]
 
-                    if not worker_active:
-                        ego_data = self.collect_ego_data(ship)
+                    # execute prompt handling immediately if interval criteria match or an urgent new threat arrives
+                    if not worker_active and (should_query_llm or is_new_threat):
                             
+                        ### Check if threats are cleared and local track recovery should initiate
                         if ego_data['status'] == 'MANEUVER':
-                            heading_error = (ship.base_heading_deg - ship.get_heading_deg() + 180) % 360 - 180
-                            rudder = np.clip(1.5 * heading_error, -35.0, 35.0) 
-                            rpm = 50.0
                             
+                            ### If an autopilot route is mapped, use its native steering formulas to navigate back
+                            if getattr(ship, 'autopilot_enabled', False) and ship.autopilot:
+                                ### temporarily bypass hold_course check to generate native track alignment rudder settings
+                                current_mode = ship.autopilot.mode
+                                ship.autopilot.mode = 0  # Force route following calculation logic
+                                ship.autopilot.update(self.dt)
+                                ship.autopilot.mode = current_mode  # Instantly restore mode registry
+                                
+                                rudder = ship.rudder_cmd
+                                rpm = 50.0
+                            else:
+                                ### Calculate angular error relative to the base path heading vector
+                                heading_error = (ship.base_heading_deg - ship.get_heading_deg() + 180) % 360 - 180
+                                rudder = np.clip(1.5 * heading_error, -35.0, 35.0) 
+                                rpm = 50.0
+                            
+                            ### Apply the return-to-route command directly to the vessel
                             ship.apply_llm_command(rudder, rpm)
                             
+                            ### Attempt to inherit previous cognitive reasoning strings for UI continuity
                             agent_reason = ""
                             if hasattr(ship, 'llm_decision') and isinstance(ship.llm_decision, dict):
                                 agent_reason = ship.llm_decision.get('reasoning', '')
@@ -1500,29 +1533,42 @@ class MainWindow(QMainWindow):
                             if not agent_reason or not agent_reason.strip():
                                 agent_reason = "Returning to track line safely."
 
+                            ### Package state definitions cleanly to prevent UI cell rendering blank spaces
                             ship.llm_reasoning = f"(Autopilot) {agent_reason.strip()}"
                             ship.llm_decision = {"rudder_deg": float(rudder), "rpm_percent": float(rpm), "reasoning": ship.llm_reasoning}
 
+                            ### Establish active maneuver lock state
                             ship.status_state = "MANEUVER" 
 
-                            if abs(heading_error) <= 1.0 and not is_off_track_distance:
+                            ### Local cross-track calculation setup to fix variable scope isolation bugs
+                            is_off_track = False
+                            heading_error = (ship.base_heading_deg - ship.get_heading_deg() + 180) % 360 - 180
+                            if getattr(ship, 'autopilot_enabled', False) and ship.autopilot:
+                                if abs(ship.autopilot.debug_cross_track) > 10.0:
+                                    is_off_track = True
+
+                            ### Check if both angular and physical cross-track errors are satisfied
+                            if abs(heading_error) <= 1.0 and not is_off_track:
                                 ship.apply_llm_command(0.0, rpm)
                                 ship.in_maneuver = False
-                                ship.status_state = "HOLD_COURSE"  # Reset state
-
+                                ship.status_state = "HOLD_COURSE"  # Reset state back to baseline, hand control back to LLM
                         else:
-                            # If a threat takes over, clear autopilot track state and mark as yield obligation
+                            ### If a high-priority threat is detected, instantly drop track recovery locks
                             if getattr(ship, 'status_state', None) == "MANEUVER":
                                 ship.status_state = "MUST_YIELD"
 
+                            ### Spawn a background network worker to query the configured LLM model
                             worker = LLMWorker(coordinator, ship.name, ego_data)
                             worker.result_ready.connect(self.on_llm_result)
                             worker.error_occurred.connect(self.on_llm_error)
                             self.llm_workers[ship.name] = worker
                             worker.start()
                     
-                self.last_llm_update = self.simulation_time
+                ### Save clock time for interval delta evaluations only if it was a timed interval block
+                if should_query_llm:
+                    self.last_llm_update = self.simulation_time
                     
+                ### Update telemetry status messages with current counts
                 active_count = 0
                 for w in self.llm_workers.values():
                     try:
@@ -1534,9 +1580,18 @@ class MainWindow(QMainWindow):
                 if active_count > 0:
                     self.statusBar().showMessage(f"Sent {active_count} parallel LLM requests at t={self.simulation_time:.1f}s")
                 
+            ### Run secondary validation synchronization loop for all ships
             for ship in self.ships:
                 heading_diff = abs((ship.base_heading_deg - ship.get_heading_deg() + 180) % 360 - 180)
-                if heading_diff > 1:
+                
+                ### Calculate cross-track offset buffer within the step synchronization loop
+                is_off_line = False
+                if getattr(ship, 'autopilot_enabled', False) and getattr(ship, 'autopilot', None) is not None:
+                    if abs(ship.autopilot.debug_cross_track) > 10.0:
+                        is_off_line = True
+                        
+                ### Maintain maneuver flag states if heading is off OR the vessel is physically split from its line
+                if heading_diff > 1 or is_off_line:
                     if getattr(ship, 'status_state', None) != "MANEUVER":
                         ship.in_maneuver = True
                         ship.status_state = "MUST_YIELD"  # Standard dynamic condition under LLM tracking
@@ -1544,11 +1599,14 @@ class MainWindow(QMainWindow):
                     ship.in_maneuver = False
                     ship.status_state = "HOLD_COURSE"
                     
+                ### Propagate the ship model dynamics step forward
                 ship.update(self.dt)
                 self.log_ship_state(ship)
                 
+            ### Increment simulation global clock counter
             self.simulation_time += self.dt
             
+            ### Redraw canvas vectors and coordinate blocks
             self.canvas.update_plot(
                 self.ships, self.running, self.simulation_time,
                 use_miles=self.use_miles, use_knots=self.use_knots,
@@ -1556,6 +1614,7 @@ class MainWindow(QMainWindow):
                 ego_perspective=self.selected_ego_ship
             )
             
+            ### Append historical logging coordinate snapshots periodically
             if self.simulation_time - self.last_history_record >= 60.0:
                 for ship in self.ships:
                     ship.record_history_waypoint(self.simulation_time)
