@@ -297,7 +297,7 @@ def check_normal_conditions(dist_m, cpa_m, tcpa_s, settings=None):
     
     # Check if the encounter falls within the analytical thresholds
     if dist_m <= detection_range and cpa_m < min_cpa and tcpa_s < min_tcpa:
-        print("Normal conditions applies")
+        # print("Normal conditions applies")
         return True
     
     return False
@@ -373,8 +373,8 @@ def determine_colreg_situation(ship1, ship2, dist_m, cpa_m, tcpa_s):
         return {
             'rule': '14',
             'situation': 'Head-on situation',
-            'ship1_action': 'Alter course to starboard',
-            'ship2_action': 'Alter course to starboard',
+            'ship1_action': 'Must yield (rule 14), Alter course to starboard',
+            'ship2_action': 'Must yield (rule 14), Alter course to starboard',
             'details': {
                 'bearing_1_to_2': b1,
                 'bearing_2_to_1': b2,
@@ -394,11 +394,11 @@ def determine_colreg_situation(ship1, ship2, dist_m, cpa_m, tcpa_s):
         ship1_stand_on = is_stand_on(bearing_2_to_1)
         
         if ship1_stand_on:
-            ship1_action = 'Stand on (Rule 17.1)'
-            ship2_action = 'Give-way (Rule 16)'
+            ship1_action = 'Stand on (Rule 17.1) - Crossing situation'
+            ship2_action = 'Give-way (Rule 16) - Crossing situation'
         else:
-            ship1_action = 'Give-way (Rule 16)'
-            ship2_action = 'Stand on (Rule 17.1)'
+            ship1_action = 'Give-way (Rule 16) - Crossing situation'
+            ship2_action = 'Stand on (Rule 17.1) - Crossing situation'
         
         return {
             'rule': '15',

@@ -18,6 +18,7 @@ from PyQt5.QtGui import QCursor
 from PyQt5.QtWidgets import QSizePolicy
 from ship import Ship
 from canvas import ShipCanvas
+from colreg_rules import calculate_relative_bearing
 from dialogs import AddShipDialog, ControlDialog, LLMSettingsDialog
 from llm_worker import LLMWorker
 from collision_analyzer import launch_collision_analysis, CollisionAnalyzer, determine_colreg_situation
@@ -1254,6 +1255,8 @@ class MainWindow(QMainWindow):
         
         highest_rule_severity = 0
         dominant_status = 'HOLD_COURSE'
+        dominant_rule = 'None'
+        dominant_other_ship = None
         no_left_turn = False
         all_passed = True
         
@@ -1291,10 +1294,12 @@ class MainWindow(QMainWindow):
             if rule_id == '17.2':
                 pair_status = 'CRITICAL_CONVERGENCE'
 
-            # Evaluates if the current interaction dict overrides the previous dominant rule threat
+            ### Track the highest severity threat and its corresponding target vessel
             if current_severity > highest_rule_severity:
                 highest_rule_severity = current_severity
                 dominant_status = pair_status
+                dominant_rule = rule_id
+                dominant_other_ship = other
 
             ### --- START RULE MEMORY SECTION ---
             
@@ -1369,11 +1374,36 @@ class MainWindow(QMainWindow):
         ### Execute final status evaluation priority tracking hierarchy
         # first we check if any active colreg rules (like Rule 14) are engaged anywhere in our threat priority matrix
         if highest_rule_severity > 0:
-            status = 'MUST_YIELD'
+            ### Rule 13 (Overtaking) Role Assignment
+            if dominant_rule == '13':
+                ### If partner vessel from dominant rule is being overtaken (is a leader), it holds course and ego must yield
+                ### If partner vessel from the dominant rule is givin a way (is a follower), iego vessel must hold course
+                if dominant_status == 'GIVE_WAY':
+                    status = 'HOLD_COURSE'
+                else:
+                    status = 'MUST_YIELD'
+                        
+            ### Rule 15 (Crossing)
+            elif dominant_rule == '15':
+            
+                ### Calculate exact relative bearing from ego_ship to the other vessel
+                rel_bearing = calculate_relative_bearing(ego_ship, dominant_other_ship)
+                
+                ### If relative bearing is between 10° and 110°, the other ship is on starboard (right)
+                if 10.0 <= rel_bearing <= 110.0:
+                    status = 'MUST_YIELD'  # Vessel sees other on right side, must yield
+                else:                    
+                    status = 'HOLD_COURSE'  # Vessel sees other on left side, holds course
+
+            ### Rule 14 (Head-On) or Rule 17.2 (Critical Convergence)
+            else:
+                status = 'MUST_YIELD'
+
         elif dominant_status == 'CRITICAL_CONVERGENCE':
             status = 'MUST_YIELD'  
         elif dominant_status == 'MUST_YIELD':
             status = 'MUST_YIELD'   
+            
         ### If all threats are clear and the ship is off course or off line, force MANEUVER mode immediately
         elif all_passed and (heading_diff > 1.0 or is_off_track_distance):
             status = 'MANEUVER'  

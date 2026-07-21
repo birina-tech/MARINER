@@ -1,7 +1,7 @@
 {
   "vessels": [
     {
-      "name": "Ship_1",
+      "name": "Holding_Course_Ship",
       "x": 0.0,
       "y": -4011.124845488257,
       "course_deg": 0.0,
@@ -12,7 +12,7 @@
       "assigned_route": "Route_7"
     },
     {
-      "name": "Ship_3",
+      "name": "Yielding_Ship",
       "x": -6017.305315203956,
       "y": 1.236093943139167,
       "course_deg": 45.0,
@@ -38,7 +38,7 @@
           "point_number": 2
         }
       ],
-      "assigned_ship": "Ship_1"
+      "assigned_ship": "Holding_Course_Ship"
     },
     {
       "name": "Route_8",
@@ -54,7 +54,7 @@
           "point_number": 2
         }
       ],
-      "assigned_ship": "Ship_3"
+      "assigned_ship": "Yielding_Ship"
     }
   ]
 }

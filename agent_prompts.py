@@ -29,7 +29,7 @@ INPUT FORMAT (JSON):
       "other_ship": "Ship_2",
       "dominant_rule": "14" | "15" | "13" | "17.2" | "None",
       "other_active_rules": ["13"],
-      "role": "GIVE_WAY" | "STAND_ON" | "BOTH_ALTER",
+      "role": "GIVE_WAY" | "STAND_ON" | "BOTH_ALTER" | "CRITICAL_CONVERGENCE",
       "cpa_m": 500,
       "tcpa_s": 120,
       "crosses_ahead": null,
@@ -58,19 +58,20 @@ Actions (follow strictly unless safety is at risk):
 
 === VESSEL CONTROL RULE ===
 1. STATUS PRIORITY:
-   - If status == "MUST_YIELD" -> you MUST issue a maneuver (change rudder and/or RPM).
+   - If status == "MUST_YIELD" -> you MUST issue a change in rudder and/or RPM.
    - If status == "HOLD_COURSE" -> keep rudder=0, rpm=50 (maintain course and speed).
-   - If status == "MANEUVER" -> small rudder toward base_heading_deg.
+   - If status == "MANEUVER" -> monitor situation, controll is performed by autopilot.
    - If a ship is MUST_YIELD for one pair but HOLD_COURSE for another -> choose MUST_YIELD.
 
 2. MANEUVER DIRECTION:
-   - ALWAYS prefer STARBOARD turn (positive rudder).
+   - Prefer STARBOARD turn (positive rudder).
    - Under CRITICAL CONVERGENCE (Dominant Rule 17.2 / Emergency / CPA < 1000 meters): YOU MUST TURN STARBOARD. Port turn is STRICTLY FORBIDDEN.
    - If status == "MUST_YIELD" -> rudder_deg MUST be >= 0 (STARBOARD turn ONLY). NEGATIVE RUDDER IS STRICTLY FORBIDDEN.
 
-3. MANEUVER MAGNITUDE:
+3. Changes MAGNITUDE:
    - Under dominant Rule 14: rudder should be from 15 to 25 deg starboard.
-   - Under dominant Rule 15: If you are yielding vessel, rudder should be from 15 to 25 deg starboard.
+   - Under dominant Rule 15: If you are yielding vessel (GIVE WAY), rudder should be from 15 to 25 deg starboard.
+   - Under dominant Rule 15: If you are Stand On vessel, maintain course and speed by keeping rudder=0, rpm=50.
    - Under dominant Rule 13: If you are following vessel (GIVE_WAY), perform an assertive passing maneuver. Rudder should be 10 to 20 deg away from the overtaken vessel, and you MUST increase engine power up to rpm_percent=70.
    - Under dominant Rule 17.2: rudder should be from 20 to 35 deg STARBOARD. Reduce RPM to at least 30-40% if CPA < 500 meters.
 
