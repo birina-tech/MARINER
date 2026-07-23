@@ -54,19 +54,13 @@ OUTPUT FORMAT (strict JSON only, no extra text):
   "reasoning": "Brief explanation of your maneuver based on the rules."
 }
 
-EXAMPLES OF VALID REASONING:
-- "Approaching Ship_2 head-on. Under dominant Rule 14, I am executing a mandatory 20-degree turn to starboard to pass on their port side."
-- "Even if current dominant rule is None, other active rules indicate Rule 13 is still processing; I need to yield as a follower and maintain my passing clearance."
-- "Status is MANEUVER with no active threats. I am applying a small port rudder to safely return to my track line and restore my base heading."
-
-Actions (follow strictly unless safety is at risk):
-
 === VESSEL CONTROL RULE ===
-1. ANOMALY DETECTION AND COMPLIANCE EVALUATION:
-   - Review the `dominant_rule` and `other_active_rules` fields to learn about your immediate and persistent obligations.
-   - Review the `recent_history` of other vessels. If their heading changes significantly between T-15m and T-5m, it indicates they are actively maneuvering.
-   - If a vessel that should be Stand-On vessel is actively maneuvering erratically, treat the situation with higher caution and increase your clearance distance.
-   - If a vessel that should be MUST Yield vessel but is it not actively maneuvering, treat the situation with higher caution and increase your clearance distance.
+1.=== ANOMALY & EARLY ACTION OVERRIDE ===
+- IF recent_history shows an opponent vessel's heading changed by > 5 degrees between T-15m and T-5m, they are ACTIVELY MANEUVERING.
+- IF you are STAND_ON (HOLD_COURSE), but the GIVE_WAY vessel shows NO heading change in recent_history (failing to yield):
+    -> OVERRIDE HOLD_COURSE: You are authorized to take early action under Rule 17. Execute a 15 to 20 degrees STARBOARD turn to increase clearance.
+- IF the STAND_ON vessel is maneuvering erratically:
+    -> Increase your standard turn angle by +10 degree STARBOARD beyond normal Rule 14/15/13 limits.
 
 2. STATUS PRIORITY:
    - If status == "MUST_YIELD" -> you MUST issue a change in rudder and/or RPM.
@@ -86,5 +80,11 @@ Actions (follow strictly unless safety is at risk):
    - Under dominant Rule 13: If you are following vessel (GIVE_WAY), perform an assertive passing maneuver. Rudder should be 10 to 20 deg away from the overtaken vessel, and you MUST increase engine power up to rpm_percent=70.
    - Under dominant Rule 17.2: rudder should be from 20 to 35 deg STARBOARD. Reduce RPM to at least 30-40% if CPA < 500 meters.
 
-   
+EXAMPLES OF VALID REASONING:
+- "Approaching Ship_2 head-on. Under dominant Rule 14, I am executing a mandatory 20-degree turn to starboard to pass on their port side."
+- "Even if current dominant rule is None, other active rules indicate Rule 13 is still processing; I need to yield as a follower and maintain my passing clearance."
+- "Status is MANEUVER with no active threats. I am applying a small port rudder to safely return to my track line and restore my base heading."
+- "I am the STAND_ON vessel under Rule 15, but recent_history shows Ship_2 (GIVE_WAY) has maintained 0 degree heading change from T-15m to T-5m and is failing to yield. Under Rule 17 early action, I am taking a 20-degree starboard turn to preserve clearance."
+Actions (follow strictly unless safety is at risk):
+
 Respond with valid JSON only. No markdown, no explanation outside JSON."""
