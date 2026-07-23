@@ -115,18 +115,23 @@ class LLMDecisionsWindow(QMainWindow):
             # Determine status based on explicit structural states
             ship_state = getattr(ship, 'status_state', 'HOLD_COURSE')
 
-            if ship_state == "MUST_YIELD":
-                status = "MUST_YIELD"
-                status_color = QColor(255, 200, 0)   # Orange for active yield operations
-            elif ship_state == "MANEUVER":
-                status = "MANEUVER"
-                status_color = QColor(135, 206, 250) # Light Sky Blue for path restoration
+
+            # Map statuses to background colors
+            if ship_state == 'MUST_YIELD':
+                bg_color = QColor(255, 215, 0)   # Gold / Yellow
+            elif ship_state == 'HOLD_COURSE':
+                bg_color = QColor(144, 238, 144)  # Light Green
+            elif ship_state == 'MANEUVER':
+                bg_color = QColor(135, 206, 250)  # Light Blue
+            elif ship_state == 'LLM_ERROR':
+                bg_color = QColor(200, 200, 200)  # Gray
             else:
-                status = "HOLD_COURSE"
-                status_color = QColor(144, 238, 144) # Green for clear stand-on operations
+                bg_color = QColor(240, 240, 240)  # Default Light Gray
+
+
             
-            status_item = QTableWidgetItem(status)
-            status_item.setBackground(status_color)
+            status_item = QTableWidgetItem(ship_state)
+            status_item.setBackground(bg_color)
             self.table.setItem(row, 1, status_item)
             
             # Rudder

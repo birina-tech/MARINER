@@ -41,19 +41,20 @@ class LLMCoordinator:
         'gemini': {
             'name': 'Google Gemini',
             'prefix': 'gemini/',
-            'models': ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-2.5-flash'],
-            'default_model': 'gemini-1.5-flash',
+            'models': ['gemini/gemini-3.1-flash-lite', 'gemini/gemini-flash-lite'],
+            'default_model': 'gemini/gemini-3.1-flash-lite',
             'needs_key': True,
             'key_env': 'GEMINI_API_KEY'
         },
         'qwen': {
-            'name': 'Alibaba Qwen',
-            'prefix': 'hosted_vllm/', 
-            'models': ['qwen3.7-plus'],
-            'default_model': 'qwen3.7-plus',
+            'name': 'Alibaba Qwen (US)',
+            'prefix': 'dashscope/', 
+            'models': ['qwen-plus', 'qwen-turbo', 'qwen-max'],
+            'default_model': 'qwen-plus',
             'needs_key': True,
-            'key_env': 'QWEN_API_KEY',
-            'api_base': 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+            'key_env': 'DASHSCOPE_API_KEY',
+            # Set the explicit US endpoint here:
+            'api_base': 'https://dashscope-us.aliyuncs.com/compatible-mode/v1'
         },
         'groq': {
             'name': 'Groq (fast, free)',
@@ -77,9 +78,16 @@ class LLMCoordinator:
         self.provider = provider
         config = self.PROVIDERS.get(provider, self.PROVIDERS['ollama'])
 
-        raw_model = model or config['default_model']
-        self.model = f"{config.get('prefix', '')}{raw_model}"
+        # 1. Get raw model name or default
+        selected_model = model or config['default_model']
         
+        # 2. Safely apply prefix without duplicating it
+        prefix = config.get('prefix', '')
+        if prefix and not selected_model.startswith(prefix):
+            self.model = f"{prefix}{selected_model}"
+        else:
+            self.model = selected_model
+
         self.api_base = config.get('api_base')
         self.last_status = None
         self.last_error = None

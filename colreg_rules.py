@@ -49,7 +49,7 @@ def check_rule_14(ship1, ship2, settings=None):
     AND     
     CPA < 2 nm.
     AND
-    TCPA < 30 min.
+    TCPA < 30 min. Increased to 60 min.
     """
     if settings is None:
         settings = get_rules_settings()
@@ -60,7 +60,7 @@ def check_rule_14(ship1, ship2, settings=None):
     bound_high = settings.get("rule_14_head_on", "bearing_bound_high_deg", 10.0)
     max_dist = settings.get("rule_14_head_on", "max_distance_m", 22224.0)
     max_cpa = settings.get("rule_14_head_on", "max_cpa_m", 3704.0)
-    max_tcpa = settings.get("rule_14_head_on", "max_tcpa_s", 1800.0)
+    max_tcpa = settings.get("rule_14_head_on", "max_tcpa_s", 2700.0)
 
     ### Calculate standard physical distance
     dist = np.sqrt((ship2.x - ship1.x)**2 + (ship2.y - ship1.y)**2)
@@ -103,7 +103,7 @@ def check_rule_13(ship1, ship2, settings=None):
     AND
     1.3. The vessels are closing in (think about how to verify this).
     AND
-    1.4. TCPA < 120 min.
+    1.4. TCPA < 120 min. Changed to 60 min.
     AND
     1.5. CPA < 2 nm.
     AND
@@ -118,7 +118,7 @@ def check_rule_13(ship1, ship2, settings=None):
     AND
     2.3. The vessels are closing in (think about how to verify this).
     AND
-    2.4. TCPA < 120 min.
+    2.4. TCPA < 120 min. Changed to 60 min.
     AND
     2.5. CPA < 2 nm.
     AND
@@ -135,7 +135,7 @@ def check_rule_13(ship1, ship2, settings=None):
     max_overtaker = settings.get("rule_13_overtaking", "max_overtaker_bearing_deg", 90.0)
     max_dist = settings.get("rule_13_overtaking", "max_distance_m", 11112.0)
     max_cpa = settings.get("rule_13_overtaking", "max_cpa_m", 3704.0)
-    max_tcpa = settings.get("rule_13_overtaking", "max_tcpa_s", 7200.0)
+    max_tcpa = settings.get("rule_13_overtaking", "max_tcpa_s", 2700.0)
 
 
     dist = np.sqrt((ship2.x - ship1.x)**2 + (ship2.y - ship1.y)**2)
@@ -191,7 +191,7 @@ def check_rule_15(ship1, ship2, settings=None):
     Rule 15 - Crossing situation
     CPA < 2 nm.
     AND
-    TCPA < 30 min.
+    TCPA < 30 min. Changed to 60 min.
     AND
     Rule 14 does not apply.
     AND
@@ -205,7 +205,7 @@ def check_rule_15(ship1, ship2, settings=None):
 
     max_dist = settings.get("rule_15_crossing", "max_distance_m", 22224.0)
     max_cpa = settings.get("rule_15_crossing", "max_cpa_m", 3704.0)
-    max_tcpa = settings.get("rule_15_crossing", "max_tcpa_s", 1800.0)
+    max_tcpa = settings.get("rule_15_crossing", "max_tcpa_s", 2700.0)
     
     dist = np.sqrt((ship2.x - ship1.x)**2 + (ship2.y - ship1.y)**2)
     if dist >= max_dist:
@@ -329,8 +329,8 @@ def determine_colreg_situation(ship1, ship2, dist_m, cpa_m, tcpa_s):
         return {
             'rule': '17.2',
             'situation': 'Critical convergence (Emergency)',
-            'ship1_action': 'Change course/speed immediately',
-            'ship2_action': 'Change course/speed immediately',
+            'ship1_action': 'BOTH_ALTER Change course/speed immediately',
+            'ship2_action': 'BOTH_ALTER Change course/speed immediately',
             'details': {
                 'bearing_1_to_2': bearing_1_to_2,
                 'bearing_2_to_1': bearing_2_to_1,
@@ -345,12 +345,12 @@ def determine_colreg_situation(ship1, ship2, dist_m, cpa_m, tcpa_s):
         # Determine which vessel is performing the overtake
         if ship2.u > ship1.u:
             overtaking_ship = ship2.name
-            ship1_action = 'Stand on (Rule 17.1)'
-            ship2_action = 'Give-way (Rule 16) - Overtake Starboard'
+            ship1_action = 'STAND_ON - Maintain or decrease speed, maintain course'
+            ship2_action = 'GIVE_WAY - Overtake Starboard'
         else:
             overtaking_ship = ship1.name
-            ship1_action = 'Give-way (Rule 16) - Overtake Starboard'
-            ship2_action = 'Stand on (Rule 17.1)'
+            ship1_action = 'GIVE_WAY - Overtake Starboard'
+            ship2_action = 'STAND_ON - Maintain or decrease speed, maintain course'
         
         return {
             'rule': '13',
@@ -373,8 +373,8 @@ def determine_colreg_situation(ship1, ship2, dist_m, cpa_m, tcpa_s):
         return {
             'rule': '14',
             'situation': 'Head-on situation',
-            'ship1_action': 'Must yield (rule 14), Alter course to starboard',
-            'ship2_action': 'Must yield (rule 14), Alter course to starboard',
+            'ship1_action': 'BOTH_ALTER - Alter course to starboard',
+            'ship2_action': 'BOTH_ALTER - Alter course to starboard',
             'details': {
                 'bearing_1_to_2': b1,
                 'bearing_2_to_1': b2,
@@ -394,11 +394,11 @@ def determine_colreg_situation(ship1, ship2, dist_m, cpa_m, tcpa_s):
         ship1_stand_on = is_stand_on(bearing_2_to_1)
         
         if ship1_stand_on:
-            ship1_action = 'Stand on (Rule 17.1) - Crossing situation'
-            ship2_action = 'Give-way (Rule 16) - Crossing situation'
+            ship1_action = 'STAND_ON - Maintain speed and course - Crossing situation'
+            ship2_action = 'GIVE_WAY - Crossing situation - Alter course to starboard'
         else:
-            ship1_action = 'Give-way (Rule 16) - Crossing situation'
-            ship2_action = 'Stand on (Rule 17.1) - Crossing situation'
+            ship1_action = 'GIVE_WAY - Crossing situation - Alter course to starboard'
+            ship2_action = 'STAND_ON - Maintain speed and course - Crossing situation'
         
         return {
             'rule': '15',
@@ -419,8 +419,8 @@ def determine_colreg_situation(ship1, ship2, dist_m, cpa_m, tcpa_s):
         return {
             'rule': 'None',
             'situation': 'Safe situation',
-            'ship1_action': 'Stand on',
-            'ship2_action': 'Stand on',
+            'ship1_action': 'STAND_ON',
+            'ship2_action': 'STAND_ON',
             'details': {
                 'bearing_1_to_2': bearing_1_to_2,
                 'bearing_2_to_1': bearing_2_to_1,
@@ -430,8 +430,8 @@ def determine_colreg_situation(ship1, ship2, dist_m, cpa_m, tcpa_s):
     return {
         'rule': 'Unknown',
         'situation': 'Uncertain situation',
-        'ship1_action': 'Stand on',
-        'ship2_action': 'Stand on',
+        'ship1_action': 'STAND_ON - Stay alert and be ready to change course or/and speed',
+        'ship2_action': 'STAND_ON - Stay alert and be ready to change course or/and speed',
         'details': {
             'bearing_1_to_2': bearing_1_to_2,
             'bearing_2_to_1': bearing_2_to_1

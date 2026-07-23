@@ -1254,8 +1254,8 @@ class MainWindow(QMainWindow):
         }
         
         highest_rule_severity = 0
-        dominant_status = 'HOLD_COURSE'
         dominant_rule = 'None'
+        dominant_pair_status = 'HOLD_COURSE'
         dominant_other_ship = None
         no_left_turn = False
         all_passed = True
@@ -1279,11 +1279,11 @@ class MainWindow(QMainWindow):
             
             action = colreg['ship2_action']
             
-            # Map out tactical role for this distinct pair
-            if 'Give-way' in action or 'Alter' in action or 'Change' in action:
+            # Map the tactical role for this distinct pair ship
+            if 'GIVE_WAY' in action:
                 pair_role = 'GIVE_WAY'
                 pair_status = 'MUST_YIELD'
-            elif 'Stand on' in action:
+            elif 'STAND_ON' in action:
                 pair_role = 'STAND_ON'
                 pair_status = 'HOLD_COURSE'
             else:
@@ -1293,16 +1293,19 @@ class MainWindow(QMainWindow):
             # If this vessel is in an emergency under 17.2, override pair status explicitly
             if rule_id == '17.2':
                 pair_status = 'CRITICAL_CONVERGENCE'
+                pair_role = 'BOTH_ALTER'
 
             ### Track the highest severity threat and its corresponding target vessel
             if current_severity > highest_rule_severity:
                 highest_rule_severity = current_severity
-                dominant_status = pair_status
+                dominant_pair_status = pair_status
                 dominant_rule = rule_id
                 dominant_other_ship = other
 
-            ### --- START RULE MEMORY SECTION ---
-            
+            ###################################################################
+            ### --- START RULE MEMORY SECTION TO KEEP TRACK OF RECENT RULES ---
+            ###################################################################
+
             if other.name not in ego_ship.active_rules:
                 ego_ship.active_rules[other.name] = set()
 
@@ -1317,15 +1320,16 @@ class MainWindow(QMainWindow):
                 if rule_id not in ['None', 'Unknown']:
                     ego_ship.active_rules[other.name].add(rule_id)
 
-            ### Determine the Dominant Rule (currently active and has the highest priority)
-            dominant_rule = rule_id if rule_id not in ['None', 'Unknown'] else 'None'
-
             ### Other active rules are the remaining rules tracked in the persistent list
             other_active = [r for r in ego_ship.active_rules[other.name] if r != dominant_rule]
 
+            ######################################
             ### --- END RULE MEMORY SECTION ---
+            ######################################
 
+            # Checking if vessel pair is crossing course 
             crossing = analyzer.calculate_course_crossing(ego_ship, other)
+
             crosses_ahead = None
             if crossing['crossing_type']:
                 if crossing['crosses_1_by_2']:
@@ -1341,6 +1345,8 @@ class MainWindow(QMainWindow):
             if np.isinf(tcpa_val) or tcpa_val > 0.1:
                 all_passed = False
 
+
+            # Recording past trajectory of this vessel
             historical_data = {
                 "T-15m": get_historical_state(t_15m, other.trajectory_history),
                 "T-10m": get_historical_state(t_10m, other.trajectory_history),
@@ -1358,6 +1364,8 @@ class MainWindow(QMainWindow):
                 'recent_history': historical_data
             })
 
+
+        ### Calculate heading diff for future determination if we need autopilot
         current_heading = ego_ship.get_heading_deg()
         heading_diff = abs((ego_ship.base_heading_deg - current_heading + 180) % 360 - 180)
         
@@ -1371,51 +1379,40 @@ class MainWindow(QMainWindow):
             if xte_error > max_allowed_track_deviation_m:
                 is_off_track_distance = True
 
-        ### Execute final status evaluation priority tracking hierarchy
-        # first we check if any active colreg rules (like Rule 14) are engaged anywhere in our threat priority matrix
-        if highest_rule_severity > 0:
-            ### Rule 13 (Overtaking) Role Assignment
-            if dominant_rule == '13':
-                ### If partner vessel from dominant rule is being overtaken (is a leader), it holds course and ego must yield
-                ### If partner vessel from the dominant rule is givin a way (is a follower), iego vessel must hold course
-                if dominant_status == 'GIVE_WAY':
-                    status = 'HOLD_COURSE'
-                else:
-                    status = 'MUST_YIELD'
-                        
-            ### Rule 15 (Crossing)
-            elif dominant_rule == '15':
-            
-                ### Calculate exact relative bearing from ego_ship to the other vessel
-                rel_bearing = calculate_relative_bearing(ego_ship, dominant_other_ship)
-                
-                ### If relative bearing is between 10° and 110°, the other ship is on starboard (right)
-                if 10.0 <= rel_bearing <= 110.0:
-                    status = 'MUST_YIELD'  # Vessel sees other on right side, must yield
-                else:                    
-                    status = 'HOLD_COURSE'  # Vessel sees other on left side, holds course
+        ####################################################################################
+        ### Execute final status evaluation priority for ego vessel using domimant pair ####
+        ####################################################################################
 
-            ### Rule 14 (Head-On) or Rule 17.2 (Critical Convergence)
-            else:
-                status = 'MUST_YIELD'
+        # Collect ALL active rules across ALL pair interactions
+        all_active_rules = set()
+        has_yield_requirement = False
 
-        elif dominant_status == 'CRITICAL_CONVERGENCE':
-            status = 'MUST_YIELD'  
-        elif dominant_status == 'MUST_YIELD':
-            status = 'MUST_YIELD'   
+        for pair in pairs_info:
+            rule = pair['dominant_rule']
+            role = pair['role']
+            if rule != 'None':
+                all_active_rules.add(rule)
+            for r in pair['other_active_rules']:
+                all_active_rules.add(r)
             
-        ### If all threats are clear and the ship is off course or off line, force MANEUVER mode immediately
+            # If ANY pair mandates GIVE_WAY or BOTH_ALTER, ego vessel MUST YIELD!
+            if role in ['GIVE_WAY', 'BOTH_ALTER']:
+                has_yield_requirement = True
+
+        # Determine overall vessel status
+        if has_yield_requirement:
+            status = 'MUST_YIELD'
         elif all_passed and (heading_diff > 1.0 or is_off_track_distance):
-            status = 'MANEUVER'  
+            status = 'MANEUVER'
         else:
             status = 'HOLD_COURSE'
-        
+
+
+
         return {
             'name': ego_ship.name,
             'current_x': float(ego_ship.x),
             'current_y': float(ego_ship.y),
-            'base_x': float(ego_ship.base_x),
-            'base_y': float(ego_ship.base_y),
             'current_heading_deg': float(current_heading),
             'base_heading_deg': float(ego_ship.base_heading_deg),
             'heading_diff_deg': float(heading_diff),
@@ -1423,14 +1420,28 @@ class MainWindow(QMainWindow):
             'current_rudder': float(ego_ship.rudder_cmd),
             'current_rpm': float(ego_ship.rpm_cmd),
             'status': status,
-            'no_left_turn': no_left_turn,
-            'in_maneuver': ego_ship.in_maneuver,
+            'no_left_turn': bool(no_left_turn),
+            'in_maneuver': bool(ego_ship.in_maneuver),
             'pairs': pairs_info
         }
 
     def on_llm_result(self, ship_name, commands):
         """Processes telemetry response commands returned from decentralized agents."""
         self.llm_pending = False
+
+
+        # === ADD THIS PRINT BLOCK HERE ===
+        print("=" * 60)
+        print(f"[LLM RESPONSE] Vessel: {ship_name} | Sim Time: {self.simulation_time:.1f}s")
+        if isinstance(commands, dict):
+            print(f"Rudder: {commands.get('rudder_deg', 0)}° | RPM: {commands.get('rpm_percent', 50)}%")
+            print(f"Reasoning: {commands.get('reasoning', 'N/A')}")
+        else:
+            print(f"Raw Output: {commands}")
+        print("=" * 60 + "\n")
+        # ==================================
+
+
         
         ship = next((s for s in self.ships if s.name == ship_name), None)
         if not ship:
@@ -1482,10 +1493,25 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'statusBar') and self.statusBar():
             self.statusBar().showMessage(f"LLM applied for {ship_name} at t={self.simulation_time:.1f}s")
 
-    def on_llm_error(self, error_msg):
+    def on_llm_error(self, ship_name, error_msg):
+
+        """Triggered when an LLMWorker thread encounters an exception or timeout."""
         self.llm_pending = False
-        print(f"LLM Worker Error: {error_msg}")
-        self.statusBar().showMessage(f"LLM Error: {error_msg[:50]}")
+        print(f"\n[LLM WORKER ERROR] {ship_name}: {error_msg}\n")
+        
+        # Find the target vessel and set its status to LLM_ERROR
+        ship = next((s for s in self.ships if s.name == ship_name), None)
+        if ship:
+            ship.status_state = "LLM_ERROR"
+            ship.llm_reasoning = f"LLM Error: {error_msg}"
+            ship.llm_decision = {
+                "rudder_deg": 0.0,
+                "rpm_percent": 50.0,
+                "reasoning": ship.llm_reasoning
+            }
+            
+        if hasattr(self, 'statusBar') and self.statusBar():
+            self.statusBar().showMessage(f"LLM Error for {ship_name}: {error_msg[:40]}")
 
     def simulation_step(self):
         """
@@ -1507,14 +1533,25 @@ class MainWindow(QMainWindow):
                 ### Initialize worker registry container if not present
                 if not hasattr(self, 'llm_workers') or self.llm_workers is None:
                     self.llm_workers = {}
+
+
                         
                 for ship in llm_ships:
                     ### Compile situational telemetry for this vessel to inspect state changes
                     ego_data = self.collect_ego_data(ship)
                     
-                    # check if a state change from baseline to yield has occurred to trigger immediate updates
-                    is_new_threat = ego_data['status'] == 'MUST_YIELD' and getattr(ship, 'status_state', 'HOLD_COURSE') != 'MUST_YIELD'
-                    
+
+                    # Store previous status state before updating
+                    prev_status = getattr(ship, 'status_state', 'HOLD_COURSE')
+
+
+                    # Assign the newly computed status from collect_ego_data directly
+                    ship.status_state = ego_data['status']
+
+                    # Check if a state change to MUST_YIELD has occurred to trigger immediate updates
+                    is_new_threat = (ship.status_state == 'MUST_YIELD' and prev_status != 'MUST_YIELD')
+
+                 
                     worker_active = False
                     ### Safely inspect thread execution states to block double-allocation
                     if ship.name in self.llm_workers:
@@ -1540,6 +1577,8 @@ class MainWindow(QMainWindow):
                                 
                                 rudder = ship.rudder_cmd
                                 rpm = 50.0
+
+                                
                             else:
                                 ### Calculate angular error relative to the base path heading vector
                                 heading_error = (ship.base_heading_deg - ship.get_heading_deg() + 180) % 360 - 180
@@ -1565,10 +1604,12 @@ class MainWindow(QMainWindow):
 
                             ### Package state definitions cleanly to prevent UI cell rendering blank spaces
                             ship.llm_reasoning = f"(Autopilot) {agent_reason.strip()}"
-                            ship.llm_decision = {"rudder_deg": float(rudder), "rpm_percent": float(rpm), "reasoning": ship.llm_reasoning}
+                            ship.llm_decision = {
+                                "rudder_deg": float(rudder), 
+                                "rpm_percent": float(rpm), 
+                                "reasoning": ship.llm_reasoning
+                            }
 
-                            ### Establish active maneuver lock state
-                            ship.status_state = "MANEUVER" 
 
                             ### Local cross-track calculation setup to fix variable scope isolation bugs
                             is_off_track = False
@@ -1583,11 +1624,9 @@ class MainWindow(QMainWindow):
                                 ship.in_maneuver = False
                                 ship.status_state = "HOLD_COURSE"  # Reset state back to baseline, hand control back to LLM
                         else:
-                            ### If a high-priority threat is detected, instantly drop track recovery locks
-                            if getattr(ship, 'status_state', None) == "MANEUVER":
-                                ship.status_state = "MUST_YIELD"
 
                             ### Spawn a background network worker to query the configured LLM model
+                            ship.llm_reasoning = "Querying LLM server..."
                             worker = LLMWorker(coordinator, ship.name, ego_data)
                             worker.result_ready.connect(self.on_llm_result)
                             worker.error_occurred.connect(self.on_llm_error)
@@ -1612,27 +1651,22 @@ class MainWindow(QMainWindow):
                 
             ### Run secondary validation synchronization loop for all ships
             for ship in self.ships:
+
+                # Update ship in_maneuver flag state based on heading error or off-line status
                 heading_diff = abs((ship.base_heading_deg - ship.get_heading_deg() + 180) % 360 - 180)
-                
-                ### Calculate cross-track offset buffer within the step synchronization loop
                 is_off_line = False
+
                 if getattr(ship, 'autopilot_enabled', False) and getattr(ship, 'autopilot', None) is not None:
                     if abs(ship.autopilot.debug_cross_track) > 10.0:
                         is_off_line = True
-                        
-                ### Maintain maneuver flag states if heading is off OR the vessel is physically split from its line
-                if heading_diff > 1 or is_off_line:
-                    if getattr(ship, 'status_state', None) != "MANEUVER":
-                        ship.in_maneuver = True
-                        ship.status_state = "MUST_YIELD"  # Standard dynamic condition under LLM tracking
-                else:
-                    ship.in_maneuver = False
-                    ship.status_state = "HOLD_COURSE"
+
+                ship.in_maneuver = (heading_diff > 1 or is_off_line)
                     
                 ### Propagate the ship model dynamics step forward
                 ship.update(self.dt)
                 self.log_ship_state(ship)
-                
+
+               
             ### Increment simulation global clock counter
             self.simulation_time += self.dt
             
