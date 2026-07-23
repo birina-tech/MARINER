@@ -1255,10 +1255,9 @@ class MainWindow(QMainWindow):
         
         highest_rule_severity = 0
         dominant_rule = 'None'
-        dominant_pair_status = 'HOLD_COURSE'
+        dominant_status = 'HOLD_COURSE'
         dominant_other_ship = None
         no_left_turn = False
-        all_passed = True
         
         t_15m = max(0, self.simulation_time - 900/50) # 15 minutes ago in simulation time
         t_10m = max(0, self.simulation_time - 600/50)
@@ -1277,28 +1276,32 @@ class MainWindow(QMainWindow):
             rule_id = colreg.get('rule', 'None')
             current_severity = RULE_PRIORITY.get(rule_id, 0)
             
-            action = colreg['ship2_action']
-            
-            # Map the tactical role for this distinct pair ship
-            if 'GIVE_WAY' in action:
-                pair_role = 'GIVE_WAY'
-                pair_status = 'MUST_YIELD'
-            elif 'STAND_ON' in action:
-                pair_role = 'STAND_ON'
-                pair_status = 'HOLD_COURSE'
-            else:
-                pair_role = 'BOTH_ALTER'
-                pair_status = 'MUST_YIELD'
+            ### Map the tactical role for BOTH the ego vessel and the other vessel
+            ego_action = colreg['ship1_action']
+            other_action = colreg['ship2_action']
+
+            def map_role_and_status(action_string):
+                if 'GIVE_WAY' in action_string:
+                    return 'GIVE_WAY', 'MUST_YIELD'
+                elif 'STAND_ON' in action_string:
+                    return 'STAND_ON', 'HOLD_COURSE'
+                else:
+                    return 'BOTH_ALTER', 'MUST_YIELD'
+
+            ego_role, ego_status = map_role_and_status(ego_action)
+            other_role, other_status = map_role_and_status(other_action)
                 
-            # If this vessel is in an emergency under 17.2, override pair status explicitly
+            ### If this vessel is in an emergency under 17.2, override pair status explicitly
             if rule_id == '17.2':
-                pair_status = 'CRITICAL_CONVERGENCE'
-                pair_role = 'BOTH_ALTER'
+                ego_role = 'BOTH_ALTER'
+                other_role = 'BOTH_ALTER'
+                ego_status = 'MUST_YIELD'
+                other_status = 'MUST_YIELD'
 
             ### Track the highest severity threat and its corresponding target vessel
             if current_severity > highest_rule_severity:
                 highest_rule_severity = current_severity
-                dominant_pair_status = pair_status
+                dominant_status = other_status
                 dominant_rule = rule_id
                 dominant_other_ship = other
 
@@ -1338,12 +1341,10 @@ class MainWindow(QMainWindow):
                     crosses_ahead = f"{ego_ship.name} crosses {other.name} ahead"
             
             # Starboard turn constraint safeguard rule
-            if pair_role == 'GIVE_WAY' and crosses_ahead and f"{other.name} crosses" in crosses_ahead:
+            if other_role == 'GIVE_WAY' and crosses_ahead and f"{other.name} crosses" in crosses_ahead:
                 no_left_turn = True
             
             tcpa_val = cpa_data['TCPA']
-            if np.isinf(tcpa_val) or tcpa_val > 0.1:
-                all_passed = False
 
 
             # Recording past trajectory of this vessel
@@ -1355,9 +1356,12 @@ class MainWindow(QMainWindow):
 
             pairs_info.append({
                 'other_ship': other.name,
-                'dominant_rule': dominant_rule,
+                'dominant_rule': rule_id,
                 'other_active_rules': other_active,
-                'role': pair_role,
+                'ego_role': ego_role,
+                'ego_status': ego_status,
+                'other_role': other_role,
+                'other_status': other_status,
                 'cpa_m': float(cpa_data['DCPA']),
                 'tcpa_s': float(cpa_data['TCPA']) if not np.isinf(cpa_data['TCPA']) else 99999.0,
                 'crosses_ahead': crosses_ahead,
@@ -1383,26 +1387,27 @@ class MainWindow(QMainWindow):
         ### Execute final status evaluation priority for ego vessel using domimant pair ####
         ####################################################################################
 
-        # Collect ALL active rules across ALL pair interactions
+        ### Collect ALL active rules across ALL pair interactions
         all_active_rules = set()
         has_yield_requirement = False
 
         for pair in pairs_info:
             rule = pair['dominant_rule']
-            role = pair['role']
+            ego_role = pair['ego_role']
+            
             if rule != 'None':
                 all_active_rules.add(rule)
             for r in pair['other_active_rules']:
                 all_active_rules.add(r)
             
-            # If ANY pair mandates GIVE_WAY or BOTH_ALTER, ego vessel MUST YIELD!
-            if role in ['GIVE_WAY', 'BOTH_ALTER']:
+            ### If ANY pair mandates the EGO vessel to GIVE_WAY or BOTH_ALTER, ego vessel MUST YIELD!
+            if ego_role in ['GIVE_WAY', 'BOTH_ALTER']:
                 has_yield_requirement = True
 
-        # Determine overall vessel status
+        ### Determine overall vessel status
         if has_yield_requirement:
             status = 'MUST_YIELD'
-        elif all_passed and (heading_diff > 1.0 or is_off_track_distance):
+        elif len(all_active_rules) == 0 and (heading_diff > 1.0 or is_off_track_distance):
             status = 'MANEUVER'
         else:
             status = 'HOLD_COURSE'
