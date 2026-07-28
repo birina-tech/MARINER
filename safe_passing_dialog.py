@@ -9,7 +9,7 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                              QTableWidget, QTableWidgetItem, QHeaderView)
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QFont
-from safe_passing_calculator import SafePassingCalculator
+#from safe_passing_calculator import SafePassingCalculator
 
 METERS_PER_NAUTICAL_MILE = 1852.0
 

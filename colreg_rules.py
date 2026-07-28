@@ -5,7 +5,7 @@ With integrated customizable parameters
 """
 import numpy as np
 from rules_settings import get_rules_settings
-from Ship import distance_to
+
 
 
 def calculate_relative_bearing(ship1, ship2):
@@ -156,12 +156,6 @@ def check_rule_13(ship1, ship2, settings=None):
 
     ### Check if vessels are actively closing in on each other using kinematic dot products
     v_rel_x, v_rel_y, v_rel = analyzer.calculate_relative_velocity(ship1, ship2)
-    #v1_x = ship1.u * np.sin(ship1.psi)
-    #v1_y = ship1.u * np.cos(ship1.psi)
-    #v2_x = ship2.u * np.sin(ship2.psi)
-    #v2_y = ship2.u * np.cos(ship2.psi)
-    #v_rel_x = v2_x - v1_x
-    #v_rel_y = v2_y - v1_y
     dx = ship2.x - ship1.x
     dy = ship2.y - ship1.y
     closing_in = (v_rel_x * dx + v_rel_y * dy) < 0

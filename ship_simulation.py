@@ -1596,8 +1596,8 @@ class MainWindow(QMainWindow):
                                 
                             else:
                                 ### Calculate angular error relative to the base path heading vector
-                                current_heading = ego_ship.get_heading_deg()
-                                heading_diff = abs(normalize_heading_error(ego_ship.base_heading_deg, current_heading))
+                                current_heading = ship.get_heading_deg()
+                                heading_diff = abs(normalize_heading_error(ship.base_heading_deg, current_heading))
                                 rudder = np.clip(1.5 * heading_error, -35.0, 35.0) 
                                 rpm = 50.0
                             
@@ -1629,8 +1629,8 @@ class MainWindow(QMainWindow):
 
                             ### Local cross-track calculation setup to fix variable scope isolation bugs
                             is_off_track = False
-                            current_heading = ego_ship.get_heading_deg()
-                            heading_diff = abs(normalize_heading_error(ego_ship.base_heading_deg, current_heading))
+                            current_heading = ship.get_heading_deg()
+                            heading_error = abs(normalize_heading_error(ship.base_heading_deg, current_heading))
                             if getattr(ship, 'autopilot_enabled', False) and ship.autopilot:
                                 if abs(ship.autopilot.debug_cross_track) > 10.0:
                                     is_off_track = True
