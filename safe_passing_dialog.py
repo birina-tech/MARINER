@@ -13,10 +13,16 @@ from safe_passing_calculator import SafePassingCalculator
 
 METERS_PER_NAUTICAL_MILE = 1852.0
 
+def normalize_heading_error(target_heading, current_heading):
+    ### normalizes the angular difference to fit strictly between -180 and +180 degrees
+    return (target_heading - current_heading + 180) % 360 - 180
+
 
 class SafePassingDialog(QDialog):
     """Полноценный диалог расчёта безопасного расхождения"""
     
+
+
     def __init__(self, ships, parent=None):
         super().__init__(parent)
         self.ships = ships
@@ -28,7 +34,9 @@ class SafePassingDialog(QDialog):
         
         self.init_ui()
         self.update_calculation()
-    
+
+
+
     def init_ui(self):
         layout = QVBoxLayout()
         
@@ -254,6 +262,8 @@ class SafePassingDialog(QDialog):
 """
         self.details_text.setHtml(details)
     
+
+
     def show_predicted_tracks(self):
         if len(self.ships) < 2:
             return
@@ -330,7 +340,9 @@ class SafePassingDialog(QDialog):
         give_way_ship.set_base_heading(new_course)
         
         current_heading = give_way_ship.get_heading_deg()
-        turn_angle = (new_course - current_heading + 180) % 360 - 180
+        
+        ### we substitute the hardcoded formula with our new utility function
+        turn_angle = normalize_heading_error(new_course, current_heading)
         give_way_ship.rudder_cmd = max(-35, min(35, turn_angle * 2))
         
         QMessageBox.information(self, "Course Applied", f"New course {new_course:.1f}\u00b0 applied to {give_way_ship.name}")

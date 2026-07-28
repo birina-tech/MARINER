@@ -28,6 +28,7 @@ from safe_passing_dialog import launch_safe_passing_calculator
 from units import format_speed, format_distance
 from route import Route, RoutePoint
 from route_dialog import RouteDialog
+from safe_passing_dialog import normalize_heading_error
 
 
 class MainWindow(QMainWindow):
@@ -1040,6 +1041,19 @@ class MainWindow(QMainWindow):
             self.canvas.setCursor(Qt.OpenHandCursor)
             self.statusBar().showMessage("Move cancelled")
 
+    def refresh_canvas(self):
+        self.canvas.update_plot(
+            self.ships, 
+            self.running, 
+            self.simulation_time,
+            use_miles=self.use_miles, 
+            use_knots=self.use_knots,
+            predicted_tracks=self.predicted_tracks,
+            routes=self.routes,
+            ego_perspective=self.selected_ego_ship
+        )
+
+
     def delete_ship(self, ship):
         if self.move_mode:
             self.cancel_move_ship()
@@ -1048,13 +1062,9 @@ class MainWindow(QMainWindow):
             self.ships.remove(ship)
         self.statusBar().showMessage(f"Deleted: {ship.name}")
         self.update_rec_button_state()
-        self.canvas.update_plot(
-            self.ships, self.running, self.simulation_time,
-            use_miles=self.use_miles, use_knots=self.use_knots,
-            predicted_tracks=self.predicted_tracks,
-            routes=self.routes,
-            ego_perspective=self.selected_ego_ship
-        )
+        
+        ### refresh the plot without repeating arguments
+        self.refresh_canvas()
 
     def open_ship_options(self, ship):
         if self.move_mode:
@@ -1586,7 +1596,8 @@ class MainWindow(QMainWindow):
                                 
                             else:
                                 ### Calculate angular error relative to the base path heading vector
-                                heading_error = (ship.base_heading_deg - ship.get_heading_deg() + 180) % 360 - 180
+                                current_heading = ego_ship.get_heading_deg()
+                                heading_diff = abs(normalize_heading_error(ego_ship.base_heading_deg, current_heading))
                                 rudder = np.clip(1.5 * heading_error, -35.0, 35.0) 
                                 rpm = 50.0
                             
@@ -1618,7 +1629,8 @@ class MainWindow(QMainWindow):
 
                             ### Local cross-track calculation setup to fix variable scope isolation bugs
                             is_off_track = False
-                            heading_error = (ship.base_heading_deg - ship.get_heading_deg() + 180) % 360 - 180
+                            current_heading = ego_ship.get_heading_deg()
+                            heading_diff = abs(normalize_heading_error(ego_ship.base_heading_deg, current_heading))
                             if getattr(ship, 'autopilot_enabled', False) and ship.autopilot:
                                 if abs(ship.autopilot.debug_cross_track) > 10.0:
                                     is_off_track = True

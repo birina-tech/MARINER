@@ -15,10 +15,8 @@ from safe_passing_dialog import SafePassingDialog
 class CollisionAnalyzer:
     """Collision Analyzer math engine"""
 
-    def calculate_cpa_tcpa(self, ship1, ship2):
-        dx = ship2.x - ship1.x
-        dy = ship2.y - ship1.y
-        dist = np.sqrt(dx**2 + dy**2)
+    def calculate_relative_velocity(self, ship1, ship2):
+        ### calculates relative velocity vectors and magnitude between two ships
         v1_x = ship1.u * np.sin(ship1.psi)
         v1_y = ship1.u * np.cos(ship1.psi)
         v2_x = ship2.u * np.sin(ship2.psi)
@@ -26,17 +24,31 @@ class CollisionAnalyzer:
         v_rel_x = v2_x - v1_x
         v_rel_y = v2_y - v1_y
         v_rel = np.sqrt(v_rel_x**2 + v_rel_y**2)
+        return v_rel_x, v_rel_y, v_rel
+
+    def calculate_cpa_tcpa(self, ship1, ship2):
+        dx = ship2.x - ship1.x
+        dy = ship2.y - ship1.y
+        dist = np.sqrt(dx**2 + dy**2)
+        
+        ### next we extract relative velocity components utilizing our new function
+        v_rel_x, v_rel_y, v_rel = self.calculate_relative_velocity(ship1, ship2)
+        
         if v_rel < 0.1:
             return {'dist': dist, 'DCPA': dist, 'TCPA': float('inf'), 'v_rel': v_rel}
+        
         v_rel_norm_x = v_rel_x / v_rel
         v_rel_norm_y = v_rel_y / v_rel
         proj = dx * v_rel_norm_x + dy * v_rel_norm_y
         tcpa = -proj / v_rel
+        
         if tcpa < 0:
             tcpa = 0
+            
         cpa_x = dx + v_rel_x * tcpa
         cpa_y = dy + v_rel_y * tcpa
         dcpa = np.sqrt(cpa_x**2 + cpa_y**2)
+        
         return {'dist': dist, 'DCPA': dcpa, 'TCPA': tcpa, 'v_rel': v_rel}
 
     def calculate_risk_index(self, dcpa, tcpa, dist):

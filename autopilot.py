@@ -7,6 +7,7 @@ Formula (2): Switching to the next leg when d2 < turn_dist(angle) or d2 < d1
 Formula (3): Hierarchical PID (heading) + P (cross-track deviation) controller
 """
 import numpy as np
+from safe_passing_dialog import normalize_heading_error
 
 
 class RouteAutopilot:
@@ -379,7 +380,7 @@ class RouteAutopilot:
         # Calculate divergence
         current_heading_deg = np.degrees(self.ship.psi)
         heading_error_deg = desired_heading_deg - current_heading_deg
-        heading_error_deg = (heading_error_deg + 180) % 360 - 180
+        heading_error_deg = normalize_heading_error(desired_heading_deg, current_heading_deg)
         
         # Drive output command limits
         rudder_cmd = self.calculate_rudder_from_heading_error(heading_error_deg, dt)

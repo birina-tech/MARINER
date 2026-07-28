@@ -16,7 +16,7 @@ DEFAULT_SETTINGS = {
         "speed_ratio_threshold": 1.0,
         "max_distance_m": 11112.0,            # 6 nm * 1852m
         "max_cpa_m": 3704.0,                  # 2 nm * 1852m
-        "max_tcpa_s": 2700.0,                 # 60 minutes * 60s
+        "max_tcpa_s": 3600.0,                 # 60 minutes * 60s
         "description": "Rule 13: Cone between 110-250 and 270-90, dist < 6nm, CPA < 2nm, TCPA < 120min"
     },
     "rule_14_head_on": {
@@ -24,14 +24,14 @@ DEFAULT_SETTINGS = {
         "bearing_bound_high_deg": 10.0,
         "max_distance_m": 22224.0,            # 12 nm * 1852m
         "max_cpa_m": 3704.0,                  # 2 nm * 1852m
-        "max_tcpa_s": 2700.0,                 # 60 minutes * 60s
+        "max_tcpa_s": 3600.0,                 # 60 minutes * 60s
         "speed_ratio_threshold": 1.0,
         "description": "Rule 14: Bow approach aspect +/-10 deg, dist < 12nm, CPA < 2nm, TCPA < 30min"
     },
     "rule_15_crossing": {
         "max_distance_m": 22224.0,            # 12 nm * 1852m
         "max_cpa_m": 3704.0,                  # 2 nm * 1852m
-        "max_tcpa_s": 2700.0,                 # 60 minutes * 60s
+        "max_tcpa_s": 3600.0,                 # 60 minutes * 60s
         "description": "Rule 15: Trajectory risk crossing when Rule 13 and 14 do not apply, dist < 12nm"
     },
     "rule_17_2_emergency": {

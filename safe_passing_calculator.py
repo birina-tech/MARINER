@@ -1,39 +1,39 @@
 """
 safe_passing_calculator.py
-Расчёт параметров безопасного расхождения судов по МППСС.
+Calculation of safe passing parameters for vessels according to COLREGs.
 """
 import numpy as np
+from collision_analyzer import CollisionAnalyzer
 
 
 class SafePassingCalculator:
-    """Калькулятор безопасного расхождения судов"""
+    """Safe passing calculator for vessels"""
     
     def __init__(self):
-        # Настройки по умолчанию
-        self.desired_dcpa_m = 1852.0  # Желаемое DCPA (1 морская миля)
-        self.maneuver_start_tcpa_s = 300.0  # За сколько секунд до TCPA начинать манёвр
-        self.min_turn_angle_deg = 15.0  # Минимальный угол поворота
-        self.max_turn_angle_deg = 60.0  # Максимальный угол поворота
-        self.prefer_starboard = True  # Предпочитать поворот вправо
-        self.search_resolution_deg = 1.0  # Точность поиска курса
+        ### Default settings
+        self.desired_dcpa_m = 1852.0  # Desired DCPA (1 nautical mile)
+        self.maneuver_start_tcpa_s = 300.0  # Seconds before TCPA to start maneuver
+        self.min_turn_angle_deg = 15.0  # Minimum turn angle
+        self.max_turn_angle_deg = 60.0  # Maximum turn angle
+        self.prefer_starboard = True  # Prefer starboard turn
+        self.search_resolution_deg = 1.0  # Course search resolution
+        self.analyzer = CollisionAnalyzer() # Initializes the external math engine
     
     def calculate_safe_course(self, give_way_ship, stand_on_ship, 
                               desired_dcpa_m=None, prefer_starboard=None):
         """
-        Рассчитать безопасный курс для give-way судна.
-        Сначала ищем решение справа (starboard). 
-        Если не нашли — ищем слева (port).
+        Calculate safe course for the give-way vessel.
         """
         if desired_dcpa_m is None:
             desired_dcpa_m = self.desired_dcpa_m
         
-        # Автоматически определяем prefer_starboard на основе МППСС
+        ### Automatically determine prefer_starboard based on COLREGs
         if prefer_starboard is None:
             prefer_starboard = self.prefer_starboard
         
         current_course = give_way_ship.get_heading_deg()
         
-        # Проверяем текущее DCPA
+        ### Check current DCPA
         current_dcpa = self._calculate_dcpa_for_course(
             give_way_ship, stand_on_ship, current_course
         )
@@ -48,7 +48,12 @@ class SafePassingCalculator:
                 'message': 'Current course is already safe'
             }
         
-        # === ШАГ 1: Ищем решение СПРАВА (starboard) ===
+        ### Initialize trackers for the best effort fallback
+        best_course = current_course
+        best_dcpa = current_dcpa
+        best_turn = 0.0
+        
+        ### first we search for a starboard solution
         starboard_angles = np.arange(self.min_turn_angle_deg, 
                                      self.max_turn_angle_deg + 1, 
                                      self.search_resolution_deg)
@@ -59,6 +64,12 @@ class SafePassingCalculator:
                 give_way_ship, stand_on_ship, test_course
             )
             
+            ### track the highest DCPA encountered so far
+            if test_dcpa > best_dcpa:
+                best_dcpa = test_dcpa
+                best_course = test_course
+                best_turn = angle
+
             if test_dcpa >= desired_dcpa_m:
                 return {
                     'safe_course_deg': test_course,
@@ -69,7 +80,7 @@ class SafePassingCalculator:
                     'message': f'Safe course found: turn {angle:.0f}\u00b0 starboard'
                 }
         
-        # === ШАГ 2: Справа не нашли — ищем СЛЕВА (port) ===
+        ### if starboard is not sufficient, we search for a port solution
         port_angles = -np.arange(self.min_turn_angle_deg, 
                                  self.max_turn_angle_deg + 1, 
                                  self.search_resolution_deg)
@@ -80,6 +91,12 @@ class SafePassingCalculator:
                 give_way_ship, stand_on_ship, test_course
             )
             
+            ### track the highest DCPA encountered so far
+            if test_dcpa > best_dcpa:
+                best_dcpa = test_dcpa
+                best_course = test_course
+                best_turn = angle
+
             if test_dcpa >= desired_dcpa_m:
                 return {
                     'safe_course_deg': test_course,
@@ -90,31 +107,7 @@ class SafePassingCalculator:
                     'message': f'Safe course found: turn {abs(angle):.0f}\u00b0 port (starboard not sufficient)'
                 }
         
-        # === ШАГ 3: Не нашли ни справа, ни слева ===
-        best_course = current_course
-        best_dcpa = current_dcpa
-        best_turn = 0
-        
-        for angle in starboard_angles:
-            test_course = (current_course + angle) % 360
-            test_dcpa = self._calculate_dcpa_for_course(
-                give_way_ship, stand_on_ship, test_course
-            )
-            if test_dcpa > best_dcpa:
-                best_dcpa = test_dcpa
-                best_course = test_course
-                best_turn = angle
-        
-        for angle in port_angles:
-            test_course = (current_course + angle) % 360
-            test_dcpa = self._calculate_dcpa_for_course(
-                give_way_ship, stand_on_ship, test_course
-            )
-            if test_dcpa > best_dcpa:
-                best_dcpa = test_dcpa
-                best_course = test_course
-                best_turn = angle
-        
+        ### if neither starboard nor port yielded a safe course, use the best effort
         return {
             'safe_course_deg': best_course,
             'turn_angle_deg': best_turn,
@@ -126,7 +119,7 @@ class SafePassingCalculator:
     
     def calculate_maneuver_timing(self, give_way_ship, stand_on_ship,
                                   maneuver_start_tcpa_s=None):
-        """Рассчитать момент начала манёвра."""
+        """Calculate the start time of the maneuver."""
         if maneuver_start_tcpa_s is None:
             maneuver_start_tcpa_s = self.maneuver_start_tcpa_s
         
@@ -163,7 +156,7 @@ class SafePassingCalculator:
     
     def simulate_passing(self, give_way_ship, stand_on_ship, 
                          new_course_deg, dt=1.0, max_time_s=1800):
-        """Симулировать расхождение судов после манёвра."""
+        """Simulate the passing of vessels after the maneuver."""
         orig_x1, orig_y1 = give_way_ship.x, give_way_ship.y
         orig_psi1 = give_way_ship.psi
         orig_u1 = give_way_ship.u
@@ -225,7 +218,7 @@ class SafePassingCalculator:
     
     def predict_trajectory(self, ship, new_course_deg=None, 
                            maneuver_time_s=0, duration_s=600, dt=2.0):
-        """Прогнозирует траекторию судна."""
+        """Predicts the trajectory of the vessel."""
         orig_x, orig_y = ship.x, ship.y
         orig_psi = ship.psi
         orig_u = ship.u
@@ -272,7 +265,7 @@ class SafePassingCalculator:
         }
     
     def calculate_full_maneuver_plan(self, give_way_ship, stand_on_ship):
-        """Рассчитать полный план манёвра: курс + момент начала."""
+        """Calculate the full maneuver plan: course and start time."""
         course_result = self.calculate_safe_course(give_way_ship, stand_on_ship)
         timing_result = self.calculate_maneuver_timing(give_way_ship, stand_on_ship)
         
@@ -293,7 +286,7 @@ class SafePassingCalculator:
         }
     
     def _generate_recommendation(self, course_result, timing_result):
-        """Сгенерировать текстовую рекомендацию"""
+        """Generate a text recommendation."""
         if not timing_result['should_maneuver_now']:
             time_to = timing_result['time_to_maneuver_s']
             if time_to == float('inf'):
@@ -317,7 +310,7 @@ class SafePassingCalculator:
                 f"Expected DCPA: {course_result['achieved_dcpa_m']:.0f} m")
     
     def _calculate_dcpa_for_course(self, give_way_ship, stand_on_ship, course_deg):
-        """Рассчитать DCPA для заданного курса give-way судна."""
+        """Calculate DCPA for a given course of the give-way vessel."""
         orig_psi = give_way_ship.psi
         give_way_ship.psi = np.deg2rad(course_deg)
         dcpa = self._calculate_dcpa(give_way_ship, stand_on_ship)
@@ -325,57 +318,12 @@ class SafePassingCalculator:
         return dcpa
     
     def _calculate_dcpa(self, ship1, ship2):
-        """Рассчитать DCPA между двумя судами"""
-        dx = ship2.x - ship1.x
-        dy = ship2.y - ship1.y
-        
-        v1_x = ship1.u * np.sin(ship1.psi)
-        v1_y = ship1.u * np.cos(ship1.psi)
-        v2_x = ship2.u * np.sin(ship2.psi)
-        v2_y = ship2.u * np.cos(ship2.psi)
-        
-        v_rel_x = v2_x - v1_x
-        v_rel_y = v2_y - v1_y
-        v_rel = np.sqrt(v_rel_x**2 + v_rel_y**2)
-        
-        if v_rel < 0.1:
-            return np.sqrt(dx**2 + dy**2)
-        
-        v_rel_norm_x = v_rel_x / v_rel
-        v_rel_norm_y = v_rel_y / v_rel
-        
-        proj = dx * v_rel_norm_x + dy * v_rel_norm_y
-        tcpa = -proj / v_rel
-        
-        if tcpa < 0:
-            return np.sqrt(dx**2 + dy**2)
-        
-        cpa_x = dx + v_rel_x * tcpa
-        cpa_y = dy + v_rel_y * tcpa
-        
-        return np.sqrt(cpa_x**2 + cpa_y**2)
+        """Calculate DCPA between two vessels."""
+        cpa_data = self.analyzer.calculate_cpa_tcpa(ship1, ship2)
+        return cpa_data['DCPA']
     
     def _calculate_tcpa(self, ship1, ship2):
-        """Рассчитать TCPA между двумя судами"""
-        dx = ship2.x - ship1.x
-        dy = ship2.y - ship1.y
-        
-        v1_x = ship1.u * np.sin(ship1.psi)
-        v1_y = ship1.u * np.cos(ship1.psi)
-        v2_x = ship2.u * np.sin(ship2.psi)
-        v2_y = ship2.u * np.cos(ship2.psi)
-        
-        v_rel_x = v2_x - v1_x
-        v_rel_y = v2_y - v1_y
-        v_rel = np.sqrt(v_rel_x**2 + v_rel_y**2)
-        
-        if v_rel < 0.1:
-            return float('inf')
-        
-        v_rel_norm_x = v_rel_x / v_rel
-        v_rel_norm_y = v_rel_y / v_rel
-        
-        proj = dx * v_rel_norm_x + dy * v_rel_norm_y
-        tcpa = -proj / v_rel
-        
-        return max(0, tcpa)
+        """Calculate TCPA between two vessels."""
+        cpa_data = self.analyzer.calculate_cpa_tcpa(ship1, ship2)
+        tcpa = cpa_data['TCPA']
+        return max(0, tcpa) if not np.isinf(tcpa) else float('inf')

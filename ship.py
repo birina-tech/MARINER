@@ -11,8 +11,6 @@ class Ship:
         self.x = float(x) # Current 2D spatial coordinates of the vessel in meters
         self.y = float(y) # Current 2D spatial coordinates of the vessel in meters
         
-        self.base_x = float(x) # Recording initial coordinates for future return to base course
-        self.base_y = float(y) # Recording initial coordinates for future return to base course
         self.psi = np.deg2rad(float(psi_deg)) # Current heading (yaw angle) of the ship, converted from degrees to radians
         self.u = float(speed_ms) # Current forward speed of the ship in meters per second
         self.r = 0.0 # Current rate of turn (yaw rate) in radians per second
@@ -27,7 +25,7 @@ class Ship:
         self.history_x = [self.x]
         self.history_y = [self.y]
         self.max_history = 2000
-        self.length = 110.0
+        self.length = 100.0 # Vessel length in meters (for pivot calculation)
         self.width = 20.0
         self.bow_length = 10.0
         self.hull_length = 100.0
@@ -36,7 +34,6 @@ class Ship:
         self.llm_decision = None
         self.base_heading_deg = float(psi_deg)
 
-        self.length = self.hull_length # Vessel length in meters (for pivot calculation)
         self.assigned_route = None  # Reference to Route object
         self.autopilot = None  # Instance of RouteAutopilot
         self.autopilot_enabled = False  # Autopilot active status flag
@@ -173,6 +170,4 @@ class Ship:
 
     def set_base_heading(self, heading_deg):
         """Set a new base heading degree and position (e.g., after Load Task)"""
-        self.base_x = self.x
-        self.base_y = self.y
         self.base_heading_deg = float(heading_deg)
