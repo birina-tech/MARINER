@@ -53,7 +53,7 @@ class LLMCoordinator:
             'default_model': 'qwen-plus',
             'needs_key': True,
             'key_env': 'DASHSCOPE_API_KEY',
-            # Set the explicit US endpoint here:
+            # Set the explicit US endpoint, is qwen is used NOT from the US, check online manual on how this should be set up
             'api_base': 'https://dashscope-us.aliyuncs.com/compatible-mode/v1'
         },
         'groq': {
@@ -73,15 +73,17 @@ class LLMCoordinator:
             'key_env': 'DEEPSEEK_API_KEY'
         }
     }
-
-    def __init__(self, provider='ollama', model=None, api_key=None):
+    # Set temperature and seed here
+    def __init__(self, provider='ollama', model=None, api_key=None, temperature = 0.7, seed = 1000): 
         self.provider = provider
+        self.temperature  = temperature
+        self.seed = seed
         config = self.PROVIDERS.get(provider, self.PROVIDERS['ollama'])
 
-        # 1. Get raw model name or default
+        # Get raw model name or default
         selected_model = model or config['default_model']
         
-        # 2. Safely apply prefix without duplicating it
+        # Apply prefix without duplicating it
         prefix = config.get('prefix', '')
         if prefix and not selected_model.startswith(prefix):
             self.model = f"{prefix}{selected_model}"
@@ -133,16 +135,19 @@ class LLMCoordinator:
             {"role": "user", "content": user_message}
         ]
 
-        response = None  # <-- Add this initialization safe-guard
+        response = None  
         try:
             kwargs = {
                 "model": self.model,
                 "messages": messages,
-                "temperature": 0.1,
+                "temperature": self.temperature,
                 "response_format": {"type": "json_object"}
             }
             if self.api_base:
                 kwargs["api_base"] = self.api_base
+
+            if self.seed is not None:
+                kwargs["seed"] = self.seed
 
             response = litellm.completion(**kwargs)
             
