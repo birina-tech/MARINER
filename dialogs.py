@@ -280,12 +280,13 @@ class ControlDialog(QDialog):
 
 
 class LLMSettingsDialog(QDialog):
-    """Диалог настроек LLM"""
-    
-    def __init__(self, current_provider, api_keys, parent=None):
+    """LLM Settings dialog"""
+
+    ### first we update __init__ to accept current_temperature and current_seed
+    def __init__(self, current_provider, api_keys, current_temperature=0.1, current_seed=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("LLM Settings")
-        self.setFixedSize(500, 300)
+        self.setFixedSize(500, 400)
         
         from llm_controller import LLMCoordinator
         
@@ -320,6 +321,25 @@ class LLMSettingsDialog(QDialog):
         key_layout.addRow("API Key:", self.key_input)
         key_group.setLayout(key_layout)
         layout.addWidget(key_group)
+
+        ### next we add the generation parameters group
+        param_group = QGroupBox("Generation Parameters")
+        param_layout = QFormLayout()
+        
+        self.temp_spin = QDoubleSpinBox()
+        self.temp_spin.setRange(0.0, 2.0)
+        self.temp_spin.setSingleStep(0.1)
+        self.temp_spin.setValue(current_temperature)
+        param_layout.addRow("Temperature:", self.temp_spin)
+        
+        self.seed_input = QLineEdit()
+        self.seed_input.setPlaceholderText("Leave empty for random seed")
+        if current_seed is not None:
+            self.seed_input.setText(str(current_seed))
+        param_layout.addRow("Seed (integer):", self.seed_input)
+        
+        param_group.setLayout(param_layout)
+        layout.addWidget(param_group)
         
         button_layout = QHBoxLayout()
         
@@ -340,4 +360,8 @@ class LLMSettingsDialog(QDialog):
         
         api_keys = {provider: key} if key else {}
         
-        return provider, api_keys
+        temperature = self.temp_spin.value()
+        seed_text = self.seed_input.text().strip()
+        seed = int(seed_text) if seed_text.isdigit() else None
+        
+        return provider, api_keys, temperature, seed

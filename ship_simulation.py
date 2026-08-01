@@ -67,6 +67,10 @@ class MainWindow(QMainWindow):
         self.use_miles = True
         self.use_knots = True
 
+        ### initialize the default LLM parameters here
+        self.llm_temperature = 0.1 
+        self.llm_seed = None
+
         self.selected_ego_ship = None  # Tracks whose perspective we are viewing
 
         self.init_menu()
@@ -212,11 +216,15 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage(f"Simulation speed set: dt={val:.2f}s")
 
     def open_llm_settings(self):
-        dialog = LLMSettingsDialog(self.current_provider, self.api_keys, self)
+        ### supply the current temperature and seed state to the dialog
+        dialog = LLMSettingsDialog(self.current_provider, self.api_keys, self.llm_temperature, self.llm_seed, self)
         if dialog.exec_() == QDialog.Accepted:
-            new_provider, new_keys = dialog.get_results()
+            ### unpack the newly returned variables
+            new_provider, new_keys, new_temp, new_seed = dialog.get_results()
             self.current_provider = new_provider
             self.api_keys = new_keys
+            self.llm_temperature = new_temp
+            self.llm_seed = new_seed
             self.llm_coordinator = None
             self.llm_status_text = "Settings changed"
             self.update_llm_status_display()
@@ -251,9 +259,13 @@ class MainWindow(QMainWindow):
     def get_or_create_coordinator(self):
         """Fetches or instantiates a fresh coordinator with current environment keys."""
         api_key = self.api_keys.get(self.current_provider)
+        
+        ### pass the tracked variables to the LLMCoordinator instantiation
         self.llm_coordinator = LLMCoordinator(
             provider=self.current_provider, 
-            api_key=api_key
+            api_key=api_key,
+            temperature=self.llm_temperature,
+            seed=self.llm_seed
         )
         return self.llm_coordinator
 
@@ -1167,6 +1179,22 @@ class MainWindow(QMainWindow):
             """)
             self.statusBar().showMessage("Simulation started")
             self.update_rec_button_state()
+            print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+            print("Simulation Started. Vessel Control Status:")
+            ### we retrieve the user-friendly name of the current provider from the LLMCoordinator
+
+            provider_info = LLMCoordinator.PROVIDERS.get(self.current_provider, {})
+            llm_name = provider_info.get('name', self.current_provider)
+            
+            ### we iterate through all active ships and print their status
+            for ship in self.ships:
+                if ship.llm_controlled:
+                    seed_display = self.llm_seed if self.llm_seed is not None else "Random"
+                    print(f" - {ship.name}: LLM Controlled [LLM: {llm_name} | Temp: {self.llm_temperature} | Seed: {seed_display}]")
+                else:
+                    print(f" - {ship.name}: Manual Control")
+            print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+
 
     def stop_simulation(self):
         self.running = False
