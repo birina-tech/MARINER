@@ -1,43 +1,214 @@
+"""
+main.py
+MARINER_2 backend entry point.
 
+Replaces the original stub main.py. The simulation_loop() placeholder is now
+filled in with the real Ship / CollisionAnalyzer / colreg_rules / autopilot /
+LLMCoordinator pipeline, via backend/simulation.py's SimulationEngine — the
+headless equivalent of the old PyQt5 MainWindow.
+
+Run locally:
+    pip install -r requirements.txt
+    uvicorn main:app --reload --port 7860
+Then open http://localhost:7860 in a browser.
+
+On HuggingFace Spaces (Docker SDK) this is the module uvicorn is pointed at
+in the Dockerfile's CMD.
+"""
 import asyncio
-from fastapi import FastAPI, WebSocket
-from typing import List
+import os
+import sys
+import json
 
-### initialize the web server
-app = FastAPI()
-active_connections: List[WebSocket] = []
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.staticfiles import StaticFiles
 
-### define the background loop (replaces PyQt5 QTimer)
+# backend/ keeps the original MARINER flat-import style (from ship import Ship,
+# etc.) so those files could be copied over unchanged. We just add the
+# directory to sys.path instead of turning it into a nested package.
+BACKEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "backend")
+sys.path.insert(0, BACKEND_DIR)
+
+from simulation import SimulationEngine  # noqa: E402
+
+app = FastAPI(title="MARINER_2")
+
+engine = SimulationEngine()
+TICK_SECONDS = 0.05  # real-time interval between ticks (was QTimer.start(50))
+
+
+# --------------------------------------------------------------------------
+# WebSocket connection management
+# --------------------------------------------------------------------------
+
+class ConnectionManager:
+    def __init__(self):
+        self.active: list[WebSocket] = []
+
+    async def connect(self, ws: WebSocket):
+        await ws.accept()
+        self.active.append(ws)
+
+    def disconnect(self, ws: WebSocket):
+        if ws in self.active:
+            self.active.remove(ws)
+
+    async def broadcast(self, payload: dict):
+        dead = []
+        for ws in self.active:
+            try:
+                await ws.send_json(payload)
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            self.disconnect(ws)
+
+    async def send_to(self, ws: WebSocket, payload: dict):
+        try:
+            await ws.send_json(payload)
+        except Exception:
+            pass
+
+
+manager = ConnectionManager()
+
+
+# --------------------------------------------------------------------------
+# Command handling — see WEBSOCKET_PROTOCOL.md for the full message schema
+# --------------------------------------------------------------------------
+
+def handle_command(msg: dict) -> dict:
+    """Dispatch one client->server WebSocket message. Returns an ack/error dict."""
+    msg_type = msg.get("type")
+
+    try:
+        if msg_type == "add_ship":
+            ship = engine.add_ship(
+                x=msg["x"], y=msg["y"],
+                course_deg=msg.get("course_deg", 0),
+                speed_ms=msg.get("speed_ms", 5.0),
+                name=msg.get("name"),
+            )
+            return {"type": "ack", "of": "add_ship", "ok": True, "ship": ship.name}
+
+        elif msg_type == "remove_ship":
+            engine.remove_ship(msg["ship"])
+            return {"type": "ack", "of": "remove_ship", "ok": True, "ship": msg["ship"]}
+
+        elif msg_type == "set_control":
+            ok = engine.set_control(
+                msg["ship"],
+                rudder_deg=msg.get("rudder_deg"),
+                rpm_percent=msg.get("rpm_percent"),
+            )
+            return {"type": "ack", "of": "set_control", "ok": ok, "ship": msg["ship"]}
+
+        elif msg_type == "toggle_llm":
+            ok = engine.toggle_llm(msg["ship"], msg.get("enabled", True))
+            return {"type": "ack", "of": "toggle_llm", "ok": ok, "ship": msg["ship"]}
+
+        elif msg_type == "assign_route":
+            route_name = engine.assign_route(msg["ship"], msg["points"])
+            return {"type": "ack", "of": "assign_route", "ok": bool(route_name), "route": route_name}
+
+        elif msg_type == "clear_route":
+            ok = engine.clear_route(msg["ship"])
+            return {"type": "ack", "of": "clear_route", "ok": ok, "ship": msg["ship"]}
+
+        elif msg_type == "set_sim":
+            engine.running = bool(msg.get("running", True))
+            return {"type": "ack", "of": "set_sim", "ok": True, "running": engine.running}
+
+        elif msg_type == "set_dt":
+            engine.dt = float(msg["dt"])
+            return {"type": "ack", "of": "set_dt", "ok": True, "dt": engine.dt}
+
+        elif msg_type == "set_llm_provider":
+            # NOTE: an api_key sent from the browser is used for this
+            # session only and is never written to disk or logged. Prefer
+            # setting provider keys as HF Space secrets (env vars) and
+            # omitting api_key from this message on a public deployment.
+            engine.set_llm_provider(
+                provider=msg["provider"],
+                model=msg.get("model"),
+                api_key=msg.get("api_key"),
+                prompt_name=msg.get("prompt_name", "vts_default"),
+            )
+            return {"type": "ack", "of": "set_llm_provider", "ok": True, "provider": msg["provider"]}
+
+        elif msg_type == "set_llm_prompt":
+            if engine.llm_coordinator is None:
+                return {"type": "error", "of": "set_llm_prompt", "message": "No LLM provider configured yet"}
+            engine.llm_coordinator.set_prompt(msg["prompt"])
+            return {"type": "ack", "of": "set_llm_prompt", "ok": True, "prompt": msg["prompt"]}
+
+        elif msg_type == "apply_safe_passing":
+            from safe_passing_calculator import SafePassingCalculator  # noqa: E402
+            give_way = engine.get_ship(msg["give_way"])
+            stand_on = engine.get_ship(msg["stand_on"])
+            if not give_way or not stand_on:
+                return {"type": "error", "of": "apply_safe_passing", "message": "Unknown vessel name"}
+            calc = SafePassingCalculator()
+            result = calc.calculate_safe_course(give_way, stand_on)
+            if result["is_valid"]:
+                give_way.set_base_heading(result["safe_course_deg"])
+                current_heading = give_way.get_heading_deg()
+                turn_angle = (result["safe_course_deg"] - current_heading + 180) % 360 - 180
+                give_way.rudder_cmd = max(-35, min(35, turn_angle * 2))
+            return {"type": "ack", "of": "apply_safe_passing", "ok": result["is_valid"], "result": result}
+
+        else:
+            return {"type": "error", "message": f"Unknown command type: {msg_type}"}
+
+    except KeyError as e:
+        return {"type": "error", "of": msg_type, "message": f"Missing field: {e}"}
+    except Exception as e:
+        return {"type": "error", "of": msg_type, "message": str(e)}
+
+
+# --------------------------------------------------------------------------
+# Simulation loop (replaces QTimer(50ms) -> MainWindow.simulation_step)
+# --------------------------------------------------------------------------
+
 async def simulation_loop():
     while True:
-        ### calculate the new positions and rules for all active ships here
-        
+        engine.step()
+        pairs = engine.compute_collision_pairs()
+        await engine.maybe_trigger_llm(pairs)   # no-ops instantly unless due
+        state = engine.serialize_state(pairs)
+        await manager.broadcast(state)
+        await asyncio.sleep(TICK_SECONDS)
 
-        ### Need to add script here
 
-
-        ### package the current coordinates into a simple dictionary
-        payload = {"ship_1": {"x": 100, "y": 200, "heading": 45}}
-        
-        ### broadcast that telemetry to any connected web browsers
-        for connection in active_connections:
-            await connection.send_json(payload)
-            
-        ### pause the loop for 50ms before the next tick
-        await asyncio.sleep(0.05)
-
-### use lifespan events to start the simulation loop when the server boots up
 @app.on_event("startup")
 async def startup_event():
     asyncio.create_task(simulation_loop())
 
-### open a websocket endpoint for the frontend to connect to
+
+# --------------------------------------------------------------------------
+# WebSocket endpoint
+# --------------------------------------------------------------------------
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    await websocket.accept()
-    active_connections.append(websocket)
+    await manager.connect(websocket)
     try:
         while True:
-            await websocket.receive_text()
-    except:
-        active_connections.remove(websocket)
+            raw = await websocket.receive_text()
+            try:
+                msg = json.loads(raw)
+            except json.JSONDecodeError:
+                await manager.send_to(websocket, {"type": "error", "message": "Invalid JSON"})
+                continue
+            response = handle_command(msg)
+            await manager.send_to(websocket, response)
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+
+
+# --------------------------------------------------------------------------
+# Static frontend (index.html / app.js / style.css)
+# --------------------------------------------------------------------------
+
+FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend")
+app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")

@@ -1,0 +1,291 @@
+"""
+simulation.py
+
+The headless replacement for ship_simulation.py's MainWindow. It owns the
+ship list and simulation clock, steps physics, runs COLREGs analysis, and
+dispatches to the LLM coordinator — the exact same responsibilities the
+QTimer-driven MainWindow.simulation_step() had, minus every PyQt5 import.
+
+main.py's asyncio loop calls SimulationEngine.step() on a real-time tick and
+periodically calls SimulationEngine.maybe_trigger_llm() (fire-and-forget,
+non-blocking), then serialize_state() for the WebSocket broadcast.
+"""
+import asyncio
+import numpy as np
+
+from ship import Ship
+from autopilot import RouteAutopilot
+from route import Route
+from collision_analyzer import CollisionAnalyzer
+from colreg_rules import determine_colreg_situation
+from llm_controller import LLMCoordinator
+
+
+class SimulationEngine:
+    def __init__(self):
+        self.ships = []
+        self.routes = {}          # route_name -> Route
+        self.running = False
+        self.sim_time = 0.0
+        self.dt = 1.0             # simulated seconds per physics step (matches original default)
+
+        self.analyzer = CollisionAnalyzer()
+
+        self.llm_coordinator = None      # created lazily via set_llm_provider()
+        self.llm_update_interval = 3.0   # seconds of SIM time between LLM calls
+        self.last_llm_update = 0.0
+        self.llm_pending = False
+        self.last_llm_status = None      # 'ok' | 'error' | None, for the frontend status light
+
+    # ---------------------------------------------------------------- ships
+
+    def add_ship(self, x, y, course_deg, speed_ms, name=None):
+        ship = Ship(x, y, course_deg, speed_ms, name=name)
+        self.ships.append(ship)
+        return ship
+
+    def remove_ship(self, name):
+        ship = self.get_ship(name)
+        if ship:
+            self.ships.remove(ship)
+
+    def get_ship(self, name):
+        return next((s for s in self.ships if s.name == name), None)
+
+    def set_control(self, name, rudder_deg=None, rpm_percent=None):
+        ship = self.get_ship(name)
+        if not ship:
+            return False
+        if rudder_deg is not None:
+            ship.rudder_cmd = float(np.clip(rudder_deg, -ship.rudder_max, ship.rudder_max))
+        if rpm_percent is not None:
+            ship.rpm_cmd = float(np.clip(rpm_percent, 0, ship.rpm_max))
+        return True
+
+    def toggle_llm(self, name, enabled):
+        ship = self.get_ship(name)
+        if not ship:
+            return False
+        ship.llm_controlled = bool(enabled)
+        return True
+
+    # --------------------------------------------------------------- routes
+
+    def assign_route(self, ship_name, points):
+        """points: list of [x, y] pairs. Creates a Route + RouteAutopilot for the ship."""
+        ship = self.get_ship(ship_name)
+        if not ship:
+            return False
+        route = Route()
+        for x, y in points:
+            route.add_point(x, y)
+        route.assigned_ship = ship
+        self.routes[route.name] = route
+
+        ship.assigned_route = route
+        ship.autopilot = RouteAutopilot(ship, route)
+        ship.autopilot_enabled = True
+        return route.name
+
+    def clear_route(self, ship_name):
+        ship = self.get_ship(ship_name)
+        if not ship:
+            return False
+        if ship.assigned_route and ship.assigned_route.name in self.routes:
+            del self.routes[ship.assigned_route.name]
+        ship.autopilot_enabled = False
+        ship.autopilot = None
+        ship.assigned_route = None
+        return True
+
+    # ------------------------------------------------------------- physics
+
+    def step(self):
+        """One physics tick. Mirrors MainWindow.simulation_step()'s physics half."""
+        if not self.running:
+            return
+
+        for ship in self.ships:
+            if getattr(ship, 'autopilot_enabled', False) and ship.autopilot:
+                ship.autopilot.update(self.dt)
+            else:
+                heading_diff = abs((ship.base_heading_deg - ship.get_heading_deg() + 180) % 360 - 180)
+                if heading_diff > 2:
+                    ship.in_maneuver = True
+            ship.update(self.dt)
+
+        self.sim_time += self.dt
+
+    # ------------------------------------------------------------ colregs
+
+    def compute_collision_pairs(self):
+        """All-pairs COLREGs analysis, for the frontend table and the LLM prompt."""
+        pairs = []
+        for i in range(len(self.ships)):
+            for j in range(i + 1, len(self.ships)):
+                s1, s2 = self.ships[i], self.ships[j]
+                cpa = self.analyzer.calculate_cpa_tcpa(s1, s2)
+                risk = self.analyzer.calculate_risk_index(cpa['DCPA'], cpa['TCPA'], cpa['dist'])
+                colreg = determine_colreg_situation(s1, s2, cpa['dist'], cpa['DCPA'], cpa['TCPA'])
+                crossing = self.analyzer.calculate_course_crossing(s1, s2)
+
+                pairs.append({
+                    'ship1': s1.name,
+                    'ship2': s2.name,
+                    'dist_m': float(cpa['dist']),
+                    'dcpa_m': float(cpa['DCPA']),
+                    'tcpa_s': None if cpa['TCPA'] == float('inf') else float(cpa['TCPA']),
+                    'risk': float(risk),
+                    'rule': colreg['rule'],
+                    'situation': colreg['situation'],
+                    'ship1_action': colreg['ship1_action'],
+                    'ship2_action': colreg['ship2_action'],
+                    'crossing_type': crossing['crossing_type'],
+                })
+        return pairs
+
+    def collect_collision_data(self, pairs):
+        """Reshape compute_collision_pairs() output into the per-ship JSON the
+        VTS system prompt expects (backend/prompts/vts_default.py)."""
+        ship_data_list = []
+        for ship in self.ships:
+            pairs_info = []
+            must_yield = False
+            for p in pairs:
+                if p['ship1'] == ship.name:
+                    other, tcpa, dcpa, rule, action = p['ship2'], p['tcpa_s'], p['dcpa_m'], p['rule'], p['ship1_action']
+                elif p['ship2'] == ship.name:
+                    other, tcpa, dcpa, rule, action = p['ship1'], p['tcpa_s'], p['dcpa_m'], p['rule'], p['ship2_action']
+                else:
+                    continue
+                if 'Give-way' in action or 'Alter' in action:
+                    must_yield = True
+                pairs_info.append({
+                    'other_ship': other,
+                    'rule': rule,
+                    'cpa_m': dcpa,
+                    'tcpa_s': 99999.0 if tcpa is None else tcpa,
+                })
+
+            ship_data_list.append({
+                'name': ship.name,
+                'current_heading_deg': float(ship.get_heading_deg()),
+                'base_heading_deg': float(ship.base_heading_deg),
+                'heading_diff_deg': float(abs((ship.base_heading_deg - ship.get_heading_deg() + 180) % 360 - 180)),
+                'speed_ms': float(ship.u),
+                'current_rudder': float(ship.rudder_cmd),
+                'current_rpm': float(ship.rpm_cmd),
+                'status': 'MUST_YIELD' if must_yield else 'HOLD_COURSE',
+                'no_left_turn': False,
+                'in_maneuver': ship.in_maneuver,
+                'maneuver_course_deg': ship.maneuver_course_deg,
+                'maneuver_target_course': ship.maneuver_target_course,
+                'autopilot_enabled': getattr(ship, 'autopilot_enabled', False),
+                'autopilot_mode': (
+                    ("HOLD" if ship.autopilot.mode == 1 else "ROUTE")
+                    if getattr(ship, 'autopilot', None) else None
+                ),
+                'assigned_route': ship.assigned_route.name if getattr(ship, 'assigned_route', None) else None,
+                'pairs': pairs_info,
+            })
+        return {'ships': ship_data_list}
+
+    # ----------------------------------------------------------------- LLM
+
+    def set_llm_provider(self, provider, model=None, api_key=None, prompt_name='vts_default'):
+        self.llm_coordinator = LLMCoordinator(
+            provider=provider, model=model, api_key=api_key, prompt_name=prompt_name
+        )
+
+    async def maybe_trigger_llm(self, pairs):
+        """Fire-and-forget LLM call, run off the event loop thread so the
+        50ms physics tick never blocks on a network request."""
+        llm_ships = [s for s in self.ships if s.llm_controlled]
+        if not llm_ships or self.llm_pending or self.llm_coordinator is None:
+            return
+        if (self.sim_time - self.last_llm_update) < self.llm_update_interval:
+            return
+
+        self.last_llm_update = self.sim_time
+        self.llm_pending = True
+        collision_data = self.collect_collision_data(pairs)
+
+        try:
+            commands = await asyncio.to_thread(
+                self.llm_coordinator.get_coordinated_commands, self.ships, collision_data
+            )
+            self.llm_coordinator.apply_commands(self.ships, commands)
+            self._update_maneuver_flags()
+            self.last_llm_status = self.llm_coordinator.last_status
+        except Exception as e:
+            self.last_llm_status = 'error'
+            print(f"[SimulationEngine] LLM call failed: {e}")
+        finally:
+            self.llm_pending = False
+
+    def _update_maneuver_flags(self):
+        """Mirrors MainWindow.on_llm_result()'s maneuver bookkeeping."""
+        for ship in self.ships:
+            if not ship.llm_controlled:
+                continue
+            autopilot = getattr(ship, 'autopilot', None)
+            autopilot_enabled = getattr(ship, 'autopilot_enabled', False)
+
+            if autopilot_enabled and autopilot and autopilot.mode == 1:  # MODE_HOLD_COURSE
+                current_heading = ship.get_heading_deg()
+                target_course = autopilot.hold_course_rad
+                if target_course is not None:
+                    target_deg = np.degrees(target_course)
+                    heading_diff = abs((current_heading - target_deg + 180) % 360 - 180)
+                    if heading_diff <= 5.0:
+                        if ship.in_maneuver:
+                            ship.in_maneuver = False
+                            ship.maneuver_course_deg = None
+                            ship.maneuver_target_course = None
+                    else:
+                        if not ship.in_maneuver:
+                            ship.in_maneuver = True
+                            ship.maneuver_target_course = target_deg
+            else:
+                if ship.in_maneuver:
+                    ship.in_maneuver = False
+                    ship.maneuver_course_deg = None
+                    ship.maneuver_target_course = None
+
+    # ------------------------------------------------------------- output
+
+    def serialize_state(self, pairs):
+        """The payload broadcast to every connected browser each tick."""
+        ships_out = []
+        for ship in self.ships:
+            ships_out.append({
+                'name': ship.name,
+                'x': ship.x,
+                'y': ship.y,
+                'heading_deg': float(ship.get_heading_deg()),
+                'speed_ms': float(ship.u),
+                'rot_deg_min': float(ship.get_rot()),
+                'rudder_cmd': float(ship.rudder_cmd),
+                'rpm_cmd': float(ship.rpm_cmd),
+                'color': ship.color,
+                'llm_controlled': ship.llm_controlled,
+                'in_maneuver': ship.in_maneuver,
+                'autopilot_enabled': getattr(ship, 'autopilot_enabled', False),
+                'llm_status_text': ship.get_llm_status_text(),
+                # world-space hull polygon — frontend just draws this, no
+                # rotation math needed client-side
+                'hull': ship.get_pentagon_vertices().tolist(),
+            })
+
+        return {
+            'type': 'state',
+            'sim_time': self.sim_time,
+            'running': self.running,
+            'llm_pending': self.llm_pending,
+            'llm_status': self.last_llm_status,
+            'ships': ships_out,
+            'collision_pairs': pairs,
+            'routes': {
+                name: route.get_coordinates_list() for name, route in self.routes.items()
+            },
+        }

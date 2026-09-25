@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MARINER_2</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div id="app">
+
+  <header id="topbar">
+    <div id="brand">MARINER<span id="brand-suffix">_2</span></div>
+    <div id="sim-status">
+      <span id="conn-dot" class="dot dot-off"></span>
+      <span id="conn-label">connecting…</span>
+      <span class="sep">|</span>
+      <span id="sim-time">t = 0 s</span>
+      <span class="sep">|</span>
+      <span id="llm-dot" class="dot dot-off"></span>
+      <span id="llm-label">LLM idle</span>
+    </div>
+    <div id="sim-controls">
+      <button id="btn-play-pause">▶ Run</button>
+      <label>dt <input id="dt-input" type="number" step="0.1" min="0.1" value="1.0"></label>
+    </div>
+  </header>
+
+  <main>
+    <div id="plot-wrap">
+      <canvas id="plot"></canvas>
+      <div id="hint">Right-click: add vessel &nbsp;•&nbsp; Left-click a hull: select &nbsp;•&nbsp; Drag: pan &nbsp;•&nbsp; Wheel: zoom</div>
+    </div>
+
+    <aside id="sidebar">
+
+      <section class="panel" id="panel-vessels">
+        <h2>Vessels</h2>
+        <div id="vessel-list"></div>
+      </section>
+
+      <section class="panel" id="panel-control">
+        <h2>Control <span id="control-target">— none selected —</span></h2>
+        <div class="row">
+          <label>Rudder <span id="rudder-val">0°</span></label>
+          <input id="rudder-slider" type="range" min="-35" max="35" value="0" step="1">
+        </div>
+        <div class="row">
+          <label>RPM <span id="rpm-val">50%</span></label>
+          <input id="rpm-slider" type="range" min="0" max="100" value="50" step="1">
+        </div>
+        <div class="row">
+          <label><input id="llm-toggle" type="checkbox"> LLM control</label>
+          <button id="btn-remove-ship">Remove vessel</button>
+        </div>
+      </section>
+
+      <section class="panel" id="panel-llm">
+        <h2>LLM Coordinator</h2>
+        <div class="row">
+          <select id="llm-provider">
+            <option value="groq">Groq</option>
+            <option value="openai">OpenAI</option>
+            <option value="anthropic">Anthropic</option>
+            <option value="deepseek">DeepSeek</option>
+            <option value="openrouter">OpenRouter</option>
+            <option value="huggingface">Hugging Face</option>
+          </select>
+          <button id="btn-set-provider">Apply</button>
+        </div>
+        <div class="row small-note">
+          Keys are read from server secrets by default. Only set one here for local testing.
+        </div>
+        <div class="row">
+          <input id="llm-key-input" type="password" placeholder="API key (optional, session-only)">
+        </div>
+      </section>
+
+      <section class="panel" id="panel-colregs">
+        <h2>COLREGs Pairs</h2>
+        <table id="colregs-table">
+          <thead>
+            <tr><th>Pair</th><th>Dist</th><th>DCPA</th><th>TCPA</th><th>Risk</th><th>Rule</th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </section>
+
+    </aside>
+  </main>
+</div>
+
+<div id="add-ship-modal" class="modal hidden">
+  <div class="modal-box">
+    <h3>Add vessel</h3>
+    <div class="row"><label>Name</label><input id="modal-name" placeholder="auto"></div>
+    <div class="row"><label>Course (°)</label><input id="modal-course" type="number" value="0" min="0" max="359"></div>
+    <div class="row"><label>Speed (kn)</label><input id="modal-speed" type="number" value="10" min="0" max="50" step="0.5"></div>
+    <div class="row modal-buttons">
+      <button id="modal-cancel">Cancel</button>
+      <button id="modal-confirm">Add</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
