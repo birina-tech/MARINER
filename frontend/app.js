@@ -10,6 +10,7 @@
 
 let ws = null;
 let selectedShip = null;
+let routeDrawing = null; // { shipName, points: [[x,y], ...] } while the user is laying out a path
 let latestState = null;
 const trails = new Map(); // shipName -> [[x,y], ...] (client-side, capped)
 const MAX_TRAIL_POINTS = 600;
@@ -26,15 +27,60 @@ function connect() {
     const msg = JSON.parse(evt.data);
     if (msg.type === "state") {
       onState(msg);
+    } else if (msg.type === "hello") {
+      populateProviderAndPromptSelects(msg.llm_providers, msg.llm_prompts);
+      send({ type: "list_scenarios" });
     } else if (msg.type === "error") {
       console.warn("Server error:", msg.message, msg);
+      alert(msg.message || "Command failed");
+    } else if (msg.type === "ack") {
+      if (msg.of === "list_scenarios") {
+        populateScenarioList(msg.scenarios);
+      } else if (msg.of === "save_scenario") {
+        send({ type: "list_scenarios" }); // refresh so the new save shows up
+      } else if (!msg.ok) {
+        alert(msg.message || `${msg.of} failed`);
+      }
     }
-    // "ack" messages are logged only; UI already reflects optimistic/next-tick state.
   };
 }
 
 function send(obj) {
   if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+}
+
+function populateProviderAndPromptSelects(providers, prompts) {
+  const providerSelect = document.getElementById("llm-provider");
+  if (providers && providers.length) {
+    providerSelect.innerHTML = "";
+    for (const p of providers) {
+      const opt = document.createElement("option");
+      opt.value = p; opt.textContent = p;
+      if (p === "groq") opt.selected = true;
+      providerSelect.appendChild(opt);
+    }
+  }
+
+  const promptSelect = document.getElementById("llm-prompt");
+  promptSelect.innerHTML = "";
+  for (const name of prompts) {
+    const opt = document.createElement("option");
+    opt.value = name; opt.textContent = name;
+    if (name === "vts_default") opt.selected = true;
+    promptSelect.appendChild(opt);
+  }
+}
+
+function populateScenarioList(names) {
+  const select = document.getElementById("scenario-list");
+  const previous = select.value;
+  select.innerHTML = "";
+  for (const name of names) {
+    const opt = document.createElement("option");
+    opt.value = name; opt.textContent = name;
+    select.appendChild(opt);
+  }
+  if (names.includes(previous)) select.value = previous;
 }
 
 function setConn(ok) {
@@ -101,11 +147,12 @@ function renderVesselList(ships) {
     name.textContent = `${ship.name}  ${ship.heading_deg.toFixed(0)}°/${(ship.speed_ms).toFixed(1)}m/s`;
     row.appendChild(name);
 
-    if (ship.llm_controlled) {
-      const b = document.createElement("span");
-      b.className = "vessel-badge badge-llm"; b.textContent = "LLM";
-      row.appendChild(b);
-    }
+    const modeBadge = document.createElement("span");
+    const modeClass = { straight: "", route: "badge-route", manual: "badge-manual", llm: "badge-llm" }[ship.control_mode] || "";
+    modeBadge.className = "vessel-badge " + modeClass;
+    modeBadge.textContent = ship.control_mode.toUpperCase();
+    row.appendChild(modeBadge);
+
     if (ship.in_maneuver) {
       const b = document.createElement("span");
       b.className = "vessel-badge badge-maneuver"; b.textContent = "MNVR";
@@ -118,14 +165,21 @@ function renderVesselList(ships) {
 function renderControlPanel(ships) {
   const target = document.getElementById("control-target");
   const ship = ships.find(s => s.name === selectedShip);
-  if (!ship) { target.textContent = "— none selected —"; return; }
+  const modeSelect = document.getElementById("control-mode-select");
+  const manualHint = document.getElementById("manual-hint");
+  const routeButtons = document.getElementById("route-buttons");
+
+  if (!ship) {
+    target.textContent = "— none selected —";
+    manualHint.classList.add("hidden");
+    return;
+  }
 
   target.textContent = ship.name;
   const rudderSlider = document.getElementById("rudder-slider");
   const rpmSlider = document.getElementById("rpm-slider");
-  const llmToggle = document.getElementById("llm-toggle");
 
-  // Don't fight the user while they're actively dragging a slider.
+  // Don't fight the user while they're actively dragging a slider or picking a mode.
   if (document.activeElement !== rudderSlider) {
     rudderSlider.value = ship.rudder_cmd;
     document.getElementById("rudder-val").textContent = `${ship.rudder_cmd.toFixed(0)}°`;
@@ -134,7 +188,14 @@ function renderControlPanel(ships) {
     rpmSlider.value = ship.rpm_cmd;
     document.getElementById("rpm-val").textContent = `${ship.rpm_cmd.toFixed(0)}%`;
   }
-  llmToggle.checked = ship.llm_controlled;
+  if (document.activeElement !== modeSelect && !routeDrawing) {
+    modeSelect.value = ship.control_mode;
+  }
+
+  manualHint.classList.toggle("hidden", ship.control_mode !== "manual");
+  // "Follow path" only makes sense to offer prominently once a path exists;
+  // the button is still there to create one either way.
+  routeButtons.querySelector("#btn-clear-path").disabled = !ship.has_route;
 }
 
 function renderColregsTable(pairs) {
@@ -268,6 +329,29 @@ function draw() {
     if (ship.in_maneuver) ctx.fillText("⚠", lx + 12, ly + 14);
   }
 
+  // in-progress route being drawn
+  if (routeDrawing && routeDrawing.points.length > 0) {
+    const ship = latestState ? latestState.ships.find(s => s.name === routeDrawing.shipName) : null;
+    ctx.strokeStyle = "#e0a530";
+    ctx.fillStyle = "#e0a530";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    const start = ship ? [ship.x, ship.y] : routeDrawing.points[0];
+    let [sx, sy] = worldToScreen(start[0], start[1]);
+    ctx.moveTo(sx, sy);
+    for (const [x, y] of routeDrawing.points) {
+      [sx, sy] = worldToScreen(x, y);
+      ctx.lineTo(sx, sy);
+    }
+    ctx.stroke();
+    for (const [x, y] of routeDrawing.points) {
+      const [px, py] = worldToScreen(x, y);
+      ctx.beginPath();
+      ctx.arc(px, py, 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
   requestAnimationFrame(draw);
 }
 requestAnimationFrame(draw);
@@ -297,6 +381,14 @@ window.addEventListener("mouseup", () => { dragging = false; });
 canvas.addEventListener("click", (e) => {
   if (!latestState) return;
   const [wx, wy] = screenToWorld(e.offsetX, e.offsetY);
+
+  if (routeDrawing) {
+    routeDrawing.points.push([wx, wy]);
+    document.getElementById("route-drawing-status").textContent =
+      `${routeDrawing.points.length} waypoint(s) — click to add more`;
+    return;
+  }
+
   let closest = null, closestDist = Infinity;
   for (const ship of latestState.ships) {
     const d = Math.hypot(ship.x - wx, ship.y - wy);
@@ -359,9 +451,85 @@ document.getElementById("rpm-slider").addEventListener("input", (e) => {
   send({ type: "set_control", ship: selectedShip, rpm_percent: parseFloat(e.target.value) });
 });
 
-document.getElementById("llm-toggle").addEventListener("change", (e) => {
+document.getElementById("control-mode-select").addEventListener("change", (e) => {
   if (!selectedShip) return;
-  send({ type: "toggle_llm", ship: selectedShip, enabled: e.target.checked });
+  send({ type: "set_control_mode", ship: selectedShip, mode: e.target.value });
+});
+
+// ---------------------------------------------------------- route drawing
+
+document.getElementById("btn-set-path").addEventListener("click", () => {
+  if (!selectedShip) { alert("Select a vessel first"); return; }
+  routeDrawing = { shipName: selectedShip, points: [] };
+  document.getElementById("route-drawing-status").textContent = "Click canvas to add waypoints";
+  document.getElementById("route-drawing-buttons").classList.remove("hidden");
+  document.getElementById("route-buttons").classList.add("hidden");
+});
+
+document.getElementById("btn-cancel-path").addEventListener("click", () => {
+  routeDrawing = null;
+  document.getElementById("route-drawing-buttons").classList.add("hidden");
+  document.getElementById("route-buttons").classList.remove("hidden");
+});
+
+document.getElementById("btn-finish-path").addEventListener("click", () => {
+  if (!routeDrawing || routeDrawing.points.length < 1) {
+    alert("Click at least one waypoint on the canvas first");
+    return;
+  }
+  send({ type: "assign_route", ship: routeDrawing.shipName, points: routeDrawing.points });
+  routeDrawing = null;
+  document.getElementById("route-drawing-buttons").classList.add("hidden");
+  document.getElementById("route-buttons").classList.remove("hidden");
+});
+
+document.getElementById("btn-clear-path").addEventListener("click", () => {
+  if (!selectedShip) return;
+  send({ type: "clear_route", ship: selectedShip });
+});
+
+// ----------------------------------------------------------------- scenario
+
+document.getElementById("btn-save-scenario").addEventListener("click", () => {
+  const name = document.getElementById("scenario-name").value.trim();
+  if (!name) { alert("Enter a scenario name"); return; }
+  send({ type: "save_scenario", name });
+});
+
+document.getElementById("btn-load-scenario").addEventListener("click", () => {
+  const select = document.getElementById("scenario-list");
+  if (!select.value) { alert("No saved scenarios yet"); return; }
+  selectedShip = null;
+  routeDrawing = null;
+  send({ type: "load_scenario", name: select.value });
+});
+
+// ----------------------------------------------------------------- keyboard
+
+document.addEventListener("keydown", (e) => {
+  const tag = document.activeElement && document.activeElement.tagName;
+  if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return; // don't hijack typing
+  if (!latestState) return;
+
+  const manualShip = latestState.ships.find(s => s.control_mode === "manual");
+  if (!manualShip) return;
+
+  const RUDDER_STEP = 5, RPM_STEP = 5;
+  let rudder = manualShip.rudder_cmd, rpm = manualShip.rpm_cmd, changed = true;
+
+  switch (e.key) {
+    case "ArrowLeft": rudder = Math.max(-35, rudder - RUDDER_STEP); break;
+    case "ArrowRight": rudder = Math.min(35, rudder + RUDDER_STEP); break;
+    case "ArrowUp": rpm = Math.min(100, rpm + RPM_STEP); break;
+    case "ArrowDown": rpm = Math.max(0, rpm - RPM_STEP); break;
+    case "0": rudder = 0; break;
+    default: changed = false;
+  }
+
+  if (changed) {
+    e.preventDefault();
+    send({ type: "set_control", ship: manualShip.name, rudder_deg: rudder, rpm_percent: rpm });
+  }
 });
 
 document.getElementById("btn-remove-ship").addEventListener("click", () => {
@@ -381,8 +549,9 @@ document.getElementById("dt-input").addEventListener("change", (e) => {
 
 document.getElementById("btn-set-provider").addEventListener("click", () => {
   const provider = document.getElementById("llm-provider").value;
+  const promptName = document.getElementById("llm-prompt").value;
   const apiKey = document.getElementById("llm-key-input").value.trim();
-  const payload = { type: "set_llm_provider", provider };
+  const payload = { type: "set_llm_provider", provider, prompt_name: promptName };
   if (apiKey) payload.api_key = apiKey;
   send(payload);
 });

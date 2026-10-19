@@ -11,6 +11,8 @@ periodically calls SimulationEngine.maybe_trigger_llm() (fire-and-forget,
 non-blocking), then serialize_state() for the WebSocket broadcast.
 """
 import asyncio
+import os
+import json
 import numpy as np
 
 from ship import Ship
@@ -19,6 +21,14 @@ from route import Route
 from collision_analyzer import CollisionAnalyzer
 from colreg_rules import determine_colreg_situation
 from llm_controller import LLMCoordinator
+from prompts import PROMPT_REGISTRY
+
+# repo_root/Tasks — same convention as the original desktop app's Save/Load Task
+TASKS_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "Tasks"
+)
+
+VALID_CONTROL_MODES = ('straight', 'route', 'manual', 'llm')
 
 
 class SimulationEngine:
@@ -85,6 +95,8 @@ class SimulationEngine:
         ship.assigned_route = route
         ship.autopilot = RouteAutopilot(ship, route)
         ship.autopilot_enabled = True
+        ship.llm_controlled = False
+        ship.control_mode = 'route'
         return route.name
 
     def clear_route(self, ship_name):
@@ -96,7 +108,57 @@ class SimulationEngine:
         ship.autopilot_enabled = False
         ship.autopilot = None
         ship.assigned_route = None
+        ship.rudder_cmd = 0.0
+        ship.control_mode = 'straight'
         return True
+
+    def set_control_mode(self, ship_name, mode):
+        """
+        The single entry point for the 4 mutually-exclusive control modes:
+        'straight' (default, neutral rudder), 'route' (follow an already-
+        assigned path at constant speed), 'manual' (keyboard control — only
+        one vessel may hold this at a time), 'llm' (swarm-coordinated).
+        Returns (ok: bool, error_message: str | None).
+        """
+        ship = self.get_ship(ship_name)
+        if not ship:
+            return False, f"Unknown vessel: {ship_name}"
+        if mode not in VALID_CONTROL_MODES:
+            return False, f"Unknown control mode: {mode}"
+
+        if mode == 'route':
+            if not ship.assigned_route or not ship.autopilot:
+                return False, "No path set for this vessel yet — use 'Set Path' first"
+            ship.autopilot_enabled = True
+            ship.llm_controlled = False
+            ship.control_mode = 'route'
+            return True, None
+
+        if mode == 'manual':
+            # Enforce "one vessel at a time": bump any other manual vessel back to straight.
+            for other in self.ships:
+                if other is not ship and other.control_mode == 'manual':
+                    other.control_mode = 'straight'
+                    other.autopilot_enabled = False
+                    other.llm_controlled = False
+                    other.rudder_cmd = 0.0
+            ship.autopilot_enabled = False
+            ship.llm_controlled = False
+            ship.control_mode = 'manual'
+            return True, None
+
+        if mode == 'llm':
+            ship.autopilot_enabled = False
+            ship.llm_controlled = True
+            ship.control_mode = 'llm'
+            return True, None
+
+        # 'straight'
+        ship.autopilot_enabled = False
+        ship.llm_controlled = False
+        ship.control_mode = 'straight'
+        ship.rudder_cmd = 0.0
+        return True, None
 
     # ------------------------------------------------------------- physics
 
@@ -190,7 +252,81 @@ class SimulationEngine:
             })
         return {'ships': ship_data_list}
 
+    # ------------------------------------------------------------ scenarios
+
+    def list_scenarios(self):
+        os.makedirs(TASKS_DIR, exist_ok=True)
+        return sorted(f[:-5] for f in os.listdir(TASKS_DIR) if f.endswith('.json'))
+
+    def save_scenario(self, name):
+        os.makedirs(TASKS_DIR, exist_ok=True)
+        data = {'ships': []}
+        for ship in self.ships:
+            data['ships'].append({
+                'name': ship.name,
+                'x': ship.x,
+                'y': ship.y,
+                'course_deg': float(ship.get_heading_deg()),
+                'speed_ms': float(ship.u),
+                'rudder_cmd': float(ship.rudder_cmd),
+                'rpm_cmd': float(ship.rpm_cmd),
+                'control_mode': ship.control_mode,
+                'route_points': (
+                    ship.assigned_route.get_coordinates_list()
+                    if ship.assigned_route else None
+                ),
+            })
+        safe_name = "".join(c for c in name if c.isalnum() or c in ("_", "-")) or "scenario"
+        path = os.path.join(TASKS_DIR, f"{safe_name}.json")
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2)
+        return safe_name
+
+    def load_scenario(self, name):
+        safe_name = "".join(c for c in name if c.isalnum() or c in ("_", "-"))
+        path = os.path.join(TASKS_DIR, f"{safe_name}.json")
+        if not os.path.exists(path):
+            return False, f"No such scenario: {name}"
+
+        with open(path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        # Halt and clear the running scene before rebuilding it — mirrors the
+        # original desktop app's "Load Task safely halts the simulation" step.
+        self.running = False
+        self.ships = []
+        self.routes = {}
+
+        for entry in data.get('ships', []):
+            ship = self.add_ship(
+                x=entry['x'], y=entry['y'],
+                course_deg=entry['course_deg'], speed_ms=entry['speed_ms'],
+                name=entry['name'],
+            )
+            ship.rudder_cmd = entry.get('rudder_cmd', 0.0)
+            ship.rpm_cmd = entry.get('rpm_cmd', 50.0)
+
+            # Recreate the route object first (if any) regardless of which
+            # mode was active when saved, so a vessel that had a path but was
+            # switched to e.g. manual doesn't lose the path on reload.
+            if entry.get('route_points'):
+                self.assign_route(ship.name, entry['route_points'])
+
+            mode = entry.get('control_mode', 'straight')
+            if mode != 'route':
+                self.set_control_mode(ship.name, mode)
+
+        return True, None
+
     # ----------------------------------------------------------------- LLM
+
+    @staticmethod
+    def available_prompts():
+        return list(PROMPT_REGISTRY.keys())
+
+    @staticmethod
+    def available_providers():
+        return list(LLMCoordinator.PROVIDERS.keys())
 
     def set_llm_provider(self, provider, model=None, api_key=None, prompt_name='vts_default'):
         self.llm_coordinator = LLMCoordinator(
@@ -271,6 +407,8 @@ class SimulationEngine:
                 'llm_controlled': ship.llm_controlled,
                 'in_maneuver': ship.in_maneuver,
                 'autopilot_enabled': getattr(ship, 'autopilot_enabled', False),
+                'control_mode': ship.control_mode,
+                'has_route': ship.assigned_route is not None,
                 'llm_status_text': ship.get_llm_status_text(),
                 # world-space hull polygon — frontend just draws this, no
                 # rotation math needed client-side

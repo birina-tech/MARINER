@@ -30,6 +30,7 @@ class Ship:
         self.color = ['blue', 'red', 'green', 'orange', 'purple', 'brown', 'pink', 'gray'][(self.id - 1) % 8]
         self.llm_controlled = False
         self.llm_decision = None
+        self.control_mode = 'straight'  # 'straight' | 'route' | 'manual' | 'llm' — one source of truth for the frontend
         self.base_heading_deg = float(psi_deg)
         self.in_maneuver = False
         self.llm_reasoning = ""  # Обоснование решения LLM

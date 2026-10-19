@@ -42,6 +42,31 @@
 
       <section class="panel" id="panel-control">
         <h2>Control <span id="control-target">— none selected —</span></h2>
+
+        <div class="row">
+          <label>Mode</label>
+          <select id="control-mode-select">
+            <option value="straight">Straight</option>
+            <option value="route">Follow path</option>
+            <option value="manual">Manual (keyboard)</option>
+            <option value="llm">LLM</option>
+          </select>
+        </div>
+
+        <div class="row" id="route-buttons">
+          <button id="btn-set-path">Set Path…</button>
+          <button id="btn-clear-path">Clear Path</button>
+        </div>
+        <div class="row hidden" id="route-drawing-buttons">
+          <span class="small-note" id="route-drawing-status">Click canvas to add waypoints</span>
+          <button id="btn-finish-path">Finish</button>
+          <button id="btn-cancel-path">Cancel</button>
+        </div>
+
+        <div class="row small-note hidden" id="manual-hint">
+          Keyboard: ←/→ rudder, ↑/↓ RPM, 0 to center rudder. Only this vessel receives keystrokes.
+        </div>
+
         <div class="row">
           <label>Rudder <span id="rudder-val">0°</span></label>
           <input id="rudder-slider" type="range" min="-35" max="35" value="0" step="1">
@@ -51,8 +76,19 @@
           <input id="rpm-slider" type="range" min="0" max="100" value="50" step="1">
         </div>
         <div class="row">
-          <label><input id="llm-toggle" type="checkbox"> LLM control</label>
           <button id="btn-remove-ship">Remove vessel</button>
+        </div>
+      </section>
+
+      <section class="panel" id="panel-scenario">
+        <h2>Scenario</h2>
+        <div class="row">
+          <input id="scenario-name" placeholder="scenario name">
+          <button id="btn-save-scenario">Save</button>
+        </div>
+        <div class="row">
+          <select id="scenario-list"></select>
+          <button id="btn-load-scenario">Load</button>
         </div>
       </section>
 
@@ -67,6 +103,12 @@
             <option value="openrouter">OpenRouter</option>
             <option value="huggingface">Hugging Face</option>
           </select>
+        </div>
+        <div class="row">
+          <label>System prompt</label>
+          <select id="llm-prompt"></select>
+        </div>
+        <div class="row">
           <button id="btn-set-provider">Apply</button>
         </div>
         <div class="row small-note">

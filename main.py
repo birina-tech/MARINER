@@ -115,6 +115,27 @@ def handle_command(msg: dict) -> dict:
             ok = engine.clear_route(msg["ship"])
             return {"type": "ack", "of": "clear_route", "ok": ok, "ship": msg["ship"]}
 
+        elif msg_type == "set_control_mode":
+            ok, error = engine.set_control_mode(msg["ship"], msg["mode"])
+            resp = {"type": "ack", "of": "set_control_mode", "ok": ok, "ship": msg["ship"], "mode": msg["mode"]}
+            if not ok:
+                resp["message"] = error
+            return resp
+
+        elif msg_type == "save_scenario":
+            saved_name = engine.save_scenario(msg["name"])
+            return {"type": "ack", "of": "save_scenario", "ok": True, "name": saved_name}
+
+        elif msg_type == "load_scenario":
+            ok, error = engine.load_scenario(msg["name"])
+            resp = {"type": "ack", "of": "load_scenario", "ok": ok, "name": msg["name"]}
+            if not ok:
+                resp["message"] = error
+            return resp
+
+        elif msg_type == "list_scenarios":
+            return {"type": "ack", "of": "list_scenarios", "ok": True, "scenarios": engine.list_scenarios()}
+
         elif msg_type == "set_sim":
             engine.running = bool(msg.get("running", True))
             return {"type": "ack", "of": "set_sim", "ok": True, "running": engine.running}
@@ -192,6 +213,11 @@ async def startup_event():
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
+    await manager.send_to(websocket, {
+        "type": "hello",
+        "llm_prompts": SimulationEngine.available_prompts(),
+        "llm_providers": SimulationEngine.available_providers(),
+    })
     try:
         while True:
             raw = await websocket.receive_text()
