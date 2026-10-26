@@ -159,3 +159,45 @@ tr.risk-med td { color: var(--amber); }
   width: 280px;
 }
 .modal-box h3 { margin-top: 0; color: var(--sweep-green); font-size: 13px; text-transform: uppercase; }
+
+/* ---------- vessel info, plot overlay, class dialog ---------- */
+
+.vessel-info {
+  white-space: pre-line;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--text-dim);
+  background: #08110f;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 6px 8px;
+  margin-bottom: 10px;
+}
+
+.plot-btn {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  font-size: 11px;
+  padding: 4px 8px;
+}
+
+.modal-info {
+  white-space: pre-line;
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--text-dim);
+  background: #08110f;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: 6px 8px;
+  margin-bottom: 10px;
+}
+
+.modal-box { width: 340px; }
+
+.vessel-text { flex: 1; min-width: 0; }
+.vessel-text .vessel-name { color: var(--text); }
+.vessel-sub { font-size: 10px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.row select { flex: 2; min-width: 0; }

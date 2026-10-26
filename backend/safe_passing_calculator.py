@@ -226,12 +226,10 @@ class SafePassingCalculator:
     def predict_trajectory(self, ship, new_course_deg=None, 
                            maneuver_time_s=0, duration_s=600, dt=2.0):
         """Прогнозирует траекторию судна."""
-        orig_x, orig_y = ship.x, ship.y
-        orig_psi = ship.psi
-        orig_u = ship.u
-        orig_r = ship.r
-        orig_rudder_cmd = ship.rudder_cmd
-        orig_rpm_cmd = ship.rpm_cmd
+        # Snapshot the full dynamic state (position, speed, yaw rate, rudder and
+        # engine actuators) and the track-history length; restored below so the
+        # prediction leaves no trace on the real vessel.
+        snap = ship.snapshot()
         
         pre_maneuver = [(ship.x, ship.y)]
         post_maneuver = []
@@ -258,12 +256,7 @@ class SafePassingCalculator:
             else:
                 post_maneuver.append((ship.x, ship.y))
         
-        ship.x, ship.y = orig_x, orig_y
-        ship.psi = orig_psi
-        ship.u = orig_u
-        ship.r = orig_r
-        ship.rudder_cmd = orig_rudder_cmd
-        ship.rpm_cmd = orig_rpm_cmd
+        ship.restore(snap)
         
         return {
             'pre_maneuver': pre_maneuver,

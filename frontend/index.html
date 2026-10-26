@@ -24,12 +24,19 @@
     <div id="sim-controls">
       <button id="btn-play-pause">▶ Run</button>
       <label>dt <input id="dt-input" type="number" step="0.1" min="0.1" value="1.0"></label>
+      <label>Vector <select id="vector-select">
+        <option value="0">off</option>
+        <option value="3">3 min</option>
+        <option value="6" selected>6 min</option>
+        <option value="12">12 min</option>
+      </select></label>
     </div>
   </header>
 
   <main>
     <div id="plot-wrap">
       <canvas id="plot"></canvas>
+      <button id="btn-fit" class="plot-btn" title="Zoom to fit all vessels">⌖ Fit</button>
       <div id="hint">Right-click: add vessel &nbsp;•&nbsp; Left-click a hull: select &nbsp;•&nbsp; Drag: pan &nbsp;•&nbsp; Wheel: zoom</div>
     </div>
 
@@ -42,6 +49,7 @@
 
       <section class="panel" id="panel-control">
         <h2>Control <span id="control-target">— none selected —</span></h2>
+        <div id="vessel-info" class="vessel-info">Select a vessel on the map or in the list.</div>
 
         <div class="row">
           <label>Mode</label>
@@ -64,7 +72,7 @@
         </div>
 
         <div class="row small-note hidden" id="manual-hint">
-          Keyboard: ←/→ rudder, ↑/↓ RPM, 0 to center rudder. Only this vessel receives keystrokes.
+          Keyboard: ←/→ rudder, ↑/↓ RPM (below 0 = astern), 0 centers the rudder. Only this vessel receives keystrokes.
         </div>
 
         <div class="row">
@@ -72,8 +80,8 @@
           <input id="rudder-slider" type="range" min="-35" max="35" value="0" step="1">
         </div>
         <div class="row">
-          <label>RPM <span id="rpm-val">50%</span></label>
-          <input id="rpm-slider" type="range" min="0" max="100" value="50" step="1">
+          <label title="Negative = astern">RPM <span id="rpm-val">50%</span></label>
+          <input id="rpm-slider" type="range" min="-50" max="100" value="50" step="1">
         </div>
         <div class="row">
           <button id="btn-remove-ship">Remove vessel</button>
@@ -137,6 +145,12 @@
   <div class="modal-box">
     <h3>Add vessel</h3>
     <div class="row"><label>Name</label><input id="modal-name" placeholder="auto"></div>
+    <div class="row"><label>Class</label><select id="modal-class"></select></div>
+    <div class="row"><label>Loading</label><select id="modal-loading">
+      <option value="laden">Laden</option>
+      <option value="ballast">Ballast</option>
+    </select></div>
+    <div class="modal-info" id="modal-class-info"></div>
     <div class="row"><label>Course (°)</label><input id="modal-course" type="number" value="0" min="0" max="359"></div>
     <div class="row"><label>Speed (kn)</label><input id="modal-speed" type="number" value="10" min="0" max="50" step="0.5"></div>
     <div class="row modal-buttons">

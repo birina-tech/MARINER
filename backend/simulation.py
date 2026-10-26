@@ -11,6 +11,7 @@ periodically calls SimulationEngine.maybe_trigger_llm() (fire-and-forget,
 non-blocking), then serialize_state() for the WebSocket broadcast.
 """
 import asyncio
+import math
 import os
 import json
 import numpy as np
@@ -22,6 +23,8 @@ from collision_analyzer import CollisionAnalyzer
 from colreg_rules import determine_colreg_situation
 from llm_controller import LLMCoordinator
 from prompts import PROMPT_REGISTRY
+from vessel_spec import make_spec, spec_from_dict, list_classes, DEFAULT_CLASS, KN_TO_MS
+from maneuvering import characteristics
 
 # repo_root/Tasks — same convention as the original desktop app's Save/Load Task
 TASKS_DIR = os.path.join(
@@ -29,6 +32,10 @@ TASKS_DIR = os.path.join(
 )
 
 VALID_CONTROL_MODES = ('straight', 'route', 'manual', 'llm')
+
+# Controllers (autopilot) run at most this far apart in simulated time, however
+# large the speed-up (self.dt) is. Ship physics sub-steps further inside Ship.update().
+CONTROL_DT = 1.0
 
 
 class SimulationEngine:
@@ -49,8 +56,16 @@ class SimulationEngine:
 
     # ---------------------------------------------------------------- ships
 
-    def add_ship(self, x, y, course_deg, speed_ms, name=None):
-        ship = Ship(x, y, course_deg, speed_ms, name=name)
+    def add_ship(self, x, y, course_deg, speed_ms, name=None,
+                 vessel_class=None, loading='laden', overrides=None, spec=None):
+        """Create a vessel. `vessel_class`/`loading` pick a preset from
+        vessel_spec.PRESETS; `overrides` (dict) adjusts individual spec fields
+        (e.g. {'length': 120}); `spec` passes a ready VesselSpec instead."""
+        if name and self.get_ship(name):
+            raise ValueError(f"A vessel named '{name}' already exists")
+        if spec is None:
+            spec = make_spec(vessel_class or DEFAULT_CLASS, loading, **(overrides or {}))
+        ship = Ship(x, y, course_deg, speed_ms, name=name, spec=spec)
         self.ships.append(ship)
         return ship
 
@@ -62,14 +77,28 @@ class SimulationEngine:
     def get_ship(self, name):
         return next((s for s in self.ships if s.name == name), None)
 
-    def set_control(self, name, rudder_deg=None, rpm_percent=None):
+    def set_control(self, name, rudder_deg=None, rpm_percent=None,
+                    rudder_delta=None, rpm_delta=None):
+        """Absolute (rudder_deg / rpm_percent) or relative (rudder_delta /
+        rpm_delta) orders. Relative orders are applied to the server's own
+        current value, so rapid key presses are never lost to network latency
+        or to a stale state message on the client."""
         ship = self.get_ship(name)
         if not ship:
             return False
+        if rudder_deg is None and rudder_delta is not None:
+            rudder_deg = ship.rudder_cmd + rudder_delta
+        if rpm_percent is None and rpm_delta is not None:
+            rpm_percent = ship.rpm_cmd + rpm_delta
         if rudder_deg is not None:
             ship.rudder_cmd = float(np.clip(rudder_deg, -ship.rudder_max, ship.rudder_max))
         if rpm_percent is not None:
-            ship.rpm_cmd = float(np.clip(rpm_percent, 0, ship.rpm_max))
+            ship.rpm_cmd = float(np.clip(rpm_percent, ship.rpm_min, ship.rpm_max))
+            if ship.rpm_cmd >= 0:
+                # An operator-set RPM is the vessel's intended cruise; the LLM is
+                # told to return to it after an avoidance maneuver. Astern orders
+                # (emergency stops) don't redefine cruise.
+                ship.cruise_rpm = ship.rpm_cmd
         return True
 
     def toggle_llm(self, name, enabled):
@@ -86,6 +115,8 @@ class SimulationEngine:
         ship = self.get_ship(ship_name)
         if not ship:
             return False
+        if len(points) < 2:
+            raise ValueError('A route needs at least 2 points')
         route = Route()
         for x, y in points:
             route.add_point(x, y)
@@ -167,14 +198,21 @@ class SimulationEngine:
         if not self.running:
             return
 
-        for ship in self.ships:
-            if getattr(ship, 'autopilot_enabled', False) and ship.autopilot:
-                ship.autopilot.update(self.dt)
-            else:
-                heading_diff = abs((ship.base_heading_deg - ship.get_heading_deg() + 180) % 360 - 180)
-                if heading_diff > 2:
-                    ship.in_maneuver = True
-            ship.update(self.dt)
+        # Run the controllers and physics at a fixed fine rate no matter how
+        # large the speed-up (self.dt) is, so changing the simulation speed
+        # never changes how a vessel behaves (a 40 m tug has a ~6 s yaw time
+        # constant and would hunt if its autopilot only ran every 5 s).
+        n = max(1, math.ceil(self.dt / CONTROL_DT))
+        h = self.dt / n
+        for _ in range(n):
+            for ship in self.ships:
+                if getattr(ship, 'autopilot_enabled', False) and ship.autopilot:
+                    ship.autopilot.update(h)
+                else:
+                    heading_diff = abs((ship.base_heading_deg - ship.get_heading_deg() + 180) % 360 - 180)
+                    if heading_diff > 2:
+                        ship.in_maneuver = True
+                ship.update(h)
 
         self.sim_time += self.dt
 
@@ -231,12 +269,14 @@ class SimulationEngine:
 
             ship_data_list.append({
                 'name': ship.name,
+                'llm_controlled': bool(ship.llm_controlled),
                 'current_heading_deg': float(ship.get_heading_deg()),
                 'base_heading_deg': float(ship.base_heading_deg),
                 'heading_diff_deg': float(abs((ship.base_heading_deg - ship.get_heading_deg() + 180) % 360 - 180)),
                 'speed_ms': float(ship.u),
                 'current_rudder': float(ship.rudder_cmd),
                 'current_rpm': float(ship.rpm_cmd),
+                'cruise_rpm': float(ship.cruise_rpm),
                 'status': 'MUST_YIELD' if must_yield else 'HOLD_COURSE',
                 'no_left_turn': False,
                 'in_maneuver': ship.in_maneuver,
@@ -270,6 +310,13 @@ class SimulationEngine:
                 'speed_ms': float(ship.u),
                 'rudder_cmd': float(ship.rudder_cmd),
                 'rpm_cmd': float(ship.rpm_cmd),
+                # Full vessel spec + actuator/yaw state: a scenario keeps its
+                # exact ships even if the presets change later (reproducibility).
+                'spec': ship.spec.to_dict(),
+                'cruise_rpm': float(ship.cruise_rpm),
+                'rpm_actual': float(ship.rpm_actual),
+                'rudder_angle': float(ship.rudder_angle),
+                'yaw_rate': float(ship.r),
                 'control_mode': ship.control_mode,
                 'route_points': (
                     ship.assigned_route.get_coordinates_list()
@@ -293,32 +340,61 @@ class SimulationEngine:
 
         # Halt and clear the running scene before rebuilding it — mirrors the
         # original desktop app's "Load Task safely halts the simulation" step.
+        # Atomic: if anything in the file is invalid, the previous scene is
+        # restored instead of leaving the user with an empty map.
+        backup = (self.ships, self.routes, self.running)
         self.running = False
         self.ships = []
         self.routes = {}
 
-        for entry in data.get('ships', []):
-            ship = self.add_ship(
-                x=entry['x'], y=entry['y'],
-                course_deg=entry['course_deg'], speed_ms=entry['speed_ms'],
-                name=entry['name'],
-            )
-            ship.rudder_cmd = entry.get('rudder_cmd', 0.0)
-            ship.rpm_cmd = entry.get('rpm_cmd', 50.0)
+        try:
+            for entry in data.get('ships', []):
+                has_spec = 'spec' in entry
+                ship = self.add_ship(
+                    x=entry['x'], y=entry['y'],
+                    course_deg=entry['course_deg'], speed_ms=entry['speed_ms'],
+                    name=entry['name'],
+                    spec=spec_from_dict(entry.get('spec')),   # old files: default class
+                )
+                ship.rudder_cmd = entry.get('rudder_cmd', 0.0)
+                if has_spec:
+                    # New-format file: restore the exact dynamic state.
+                    ship.rpm_cmd = entry.get('rpm_cmd', ship.rpm_cmd)
+                    ship.rpm_actual = entry.get('rpm_actual', ship.rpm_cmd)
+                    ship.cruise_rpm = entry.get('cruise_rpm', ship.rpm_cmd)
+                    ship.rudder_angle = entry.get('rudder_angle', 0.0)
+                    ship.r = entry.get('yaw_rate', 0.0)
+                # Old-format files (no 'spec') stored RPM on a different scale;
+                # leave the vessel holding its saved speed instead.
 
-            # Recreate the route object first (if any) regardless of which
-            # mode was active when saved, so a vessel that had a path but was
-            # switched to e.g. manual doesn't lose the path on reload.
-            if entry.get('route_points'):
-                self.assign_route(ship.name, entry['route_points'])
+                # Recreate the route object first (if any) regardless of which
+                # mode was active when saved, so a vessel that had a path but was
+                # switched to e.g. manual doesn't lose the path on reload.
+                if entry.get('route_points'):
+                    self.assign_route(ship.name, entry['route_points'])
 
-            mode = entry.get('control_mode', 'straight')
-            if mode != 'route':
-                self.set_control_mode(ship.name, mode)
+                mode = entry.get('control_mode', 'straight')
+                if mode != 'route':
+                    self.set_control_mode(ship.name, mode)
+        except Exception as e:
+            self.ships, self.routes, self.running = backup
+            return False, f"Could not load scenario '{name}': {e}"
 
         return True, None
 
     # ----------------------------------------------------------------- LLM
+
+    @staticmethod
+    def available_vessel_classes():
+        """Class catalogue for the add-vessel dialog, including maneuvering
+        figures (turning diameter, stopping distance) measured on the real
+        ship model by maneuvering.characteristics() (cached)."""
+        from vessel_spec import make_spec as _mk
+        classes = list_classes()
+        for c in classes:
+            for loading, info in c['loadings'].items():
+                info.update(characteristics(_mk(c['id'], loading)))
+        return classes
 
     @staticmethod
     def available_prompts():
@@ -402,7 +478,19 @@ class SimulationEngine:
                 'speed_ms': float(ship.u),
                 'rot_deg_min': float(ship.get_rot()),
                 'rudder_cmd': float(ship.rudder_cmd),
+                'rudder_angle': float(ship.rudder_angle),
                 'rpm_cmd': float(ship.rpm_cmd),
+                'rpm_actual': float(ship.rpm_actual),
+                'rpm_min': float(ship.rpm_min),
+                'cruise_rpm': float(ship.cruise_rpm),
+                'vessel_class': ship.spec.class_id,
+                'class_name': ship.spec.class_name,
+                'loading': ship.spec.loading,
+                'length': float(ship.spec.length),
+                'beam': float(ship.spec.beam),
+                'draft': float(ship.spec.draft),
+                'displacement_t': float(ship.spec.displacement_t),
+                'max_speed_ms': float(ship.spec.max_speed_ms),
                 'color': ship.color,
                 'llm_controlled': ship.llm_controlled,
                 'in_maneuver': ship.in_maneuver,
@@ -421,6 +509,7 @@ class SimulationEngine:
             'running': self.running,
             'llm_pending': self.llm_pending,
             'llm_status': self.last_llm_status,
+            'llm_configured': self.llm_coordinator is not None,
             'ships': ships_out,
             'collision_pairs': pairs,
             'routes': {

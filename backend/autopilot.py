@@ -6,6 +6,7 @@ autopilot.py
 Формула (2): переключение на следующее плечо когда d2 < turn_dist(угол) или d2 < d1
 Формула (3): иерархический ПИД (по курсу) + П (по отклонению) регулятор
 """
+import math
 import numpy as np
 
 
@@ -52,6 +53,22 @@ class RouteAutopilot:
         # П по отклонению от траектории
         self.b_pr = 0.01
         self.b_in = 0.0
+
+        # === MARINER_2: АВТОНАСТРОЙКА ПОД СУДНО ===
+        # Исходные коэффициенты (3.0 / 0.002 / 0.3) и таблица расстояний были
+        # подобраны для одного конкретного судна. Для судов других размеров и
+        # водоизмещения они дают колебания (недодемпфирование) либо слишком
+        # раннее/позднее начало поворота. При auto_tune=True закон управления
+        # остаётся тем же (формула 3), но коэффициенты и расстояния начала
+        # манёвра вычисляются из динамики судна (ship.spec).
+        # auto_tune = False возвращает исходные константы.
+        self.auto_tune = True
+        self._legacy_gains = (self.a_pr, self.a_in, self.a_d)
+        self._legacy_b_pr = self.b_pr
+        self._legacy_turn_table = dict(self.turn_distance_table)
+        self.TUNE_WN_T = 2.0    # собственная частота контура курса x постоянная времени судна
+        self.TUNE_ZETA = 1.0    # желаемое демпфирование
+        self.TUNE_LOOKAHEAD_L = 8.0  # длина упреждения по отклонению от траектории, в длинах судна
         
         # Интегралы для регулятора
         self.integral_heading_error = 0.0
@@ -59,7 +76,7 @@ class RouteAutopilot:
         self.integral_cross_track = 0.0
         
         # Ограничения
-        self.max_rudder = 35.0  # градусов
+        self.max_rudder = getattr(ship, 'rudder_max', 35.0)  # градусов
         self.max_course_correction = 30.0  # градусов (макс поправка за отклонение)
         
         # === ПАРАМЕТРЫ ===
@@ -103,6 +120,18 @@ class RouteAutopilot:
         self.prev_heading_error = 0.0
         self.integral_cross_track = 0.0
 
+    def _vessel_spec(self):
+        return getattr(self.ship, 'spec', None)
+
+    def _active_turn_table(self):
+        """Таблица расстояний начала манёвра: из динамики судна (auto_tune)
+        или исходная. Для судна: d = Advance - Transfer * ctg(угол)."""
+        spec = self._vessel_spec()
+        if self.auto_tune and spec is not None:
+            from maneuvering import wheel_over_distances
+            return wheel_over_distances(spec)
+        return self._legacy_turn_table
+
     def get_turn_distance(self, turn_angle_deg):
         """
         Получить расстояние начала манёвра в зависимости от угла поворота.
@@ -110,23 +139,49 @@ class RouteAutopilot:
         """
         if turn_angle_deg <= 0:
             return 0
-        
-        angles = sorted(self.turn_distance_table.keys())
-        
+
+        table = self._active_turn_table()
+        angles = sorted(table.keys())
+
         if turn_angle_deg <= angles[0]:
-            return self.turn_distance_table[angles[0]]
-        
+            return table[angles[0]]
+
         if turn_angle_deg >= angles[-1]:
-            return self.turn_distance_table[angles[-1]]
-        
+            return table[angles[-1]]
+
         # Линейная интерполяция
         for i in range(len(angles) - 1):
             if angles[i] <= turn_angle_deg <= angles[i+1]:
                 a1, a2 = angles[i], angles[i+1]
-                d1, d2 = self.turn_distance_table[a1], self.turn_distance_table[a2]
+                d1, d2 = table[a1], table[a2]
                 return d1 + (d2 - d1) * (turn_angle_deg - a1) / (a2 - a1)
-        
-        return self.turn_distance_table[angles[-1]]
+
+        return table[angles[-1]]
+
+    def _schedule_gains(self):
+        """Подстройка коэффициентов ПИД под динамику судна и текущую скорость.
+
+        Модель курса: T r' + r = K*delta, K = K'*U/L, T = T'*L/U, поэтому
+        K*T = K'*T' не зависит от скорости. Для замкнутого контура с
+        желаемой собственной частотой wn = x/T и демпфированием zeta:
+            a_pr = x^2 / (K'*T')
+            a_d  = (2*zeta*x - 1) * L / (K'*U)      (с)
+        a_in берётся малым: возмущений (ветер, течение) в модели нет."""
+        spec = self._vessel_spec()
+        if not self.auto_tune or spec is None:
+            self.a_pr, self.a_in, self.a_d = self._legacy_gains
+            self.b_pr = self._legacy_b_pr
+            return
+        U = max(self.ship.u, 1.0)
+        L = spec.length
+        x = self.TUNE_WN_T
+        T = spec.t_prime * L / U
+        self.a_pr = x * x / (spec.k_prime * spec.t_prime)
+        self.a_d = max(0.0, 2.0 * self.TUNE_ZETA * x - 1.0) * L / (spec.k_prime * U)
+        self.a_in = self.a_pr / (30.0 * T)
+        # b_pr (град/м): поправка к курсу за отклонение chi. Малый угол:
+        # поправка = chi / (упреждение), упреждение = TUNE_LOOKAHEAD_L * L.
+        self.b_pr = math.degrees(1.0 / (self.TUNE_LOOKAHEAD_L * L))
 
     def find_nearest_point_and_segment(self, ship_pos, preferred_seg_idx=None):
         """
@@ -269,6 +324,8 @@ class RouteAutopilot:
         Шаг работы авторулевого.
         Реализация формулы (3) из статьи.
         """
+        self._schedule_gains()
+
         if not self.route or len(self.route.points) < 2:
             self.ship.rudder_cmd = 0
             return

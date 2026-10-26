@@ -88,8 +88,12 @@ def handle_command(msg: dict) -> dict:
                 course_deg=msg.get("course_deg", 0),
                 speed_ms=msg.get("speed_ms", 5.0),
                 name=msg.get("name"),
+                vessel_class=msg.get("vessel_class"),
+                loading=msg.get("loading", "laden"),
+                overrides=msg.get("overrides"),
             )
-            return {"type": "ack", "of": "add_ship", "ok": True, "ship": ship.name}
+            return {"type": "ack", "of": "add_ship", "ok": True, "ship": ship.name,
+                    "vessel_class": ship.spec.class_id, "loading": ship.spec.loading}
 
         elif msg_type == "remove_ship":
             engine.remove_ship(msg["ship"])
@@ -100,6 +104,8 @@ def handle_command(msg: dict) -> dict:
                 msg["ship"],
                 rudder_deg=msg.get("rudder_deg"),
                 rpm_percent=msg.get("rpm_percent"),
+                rudder_delta=msg.get("rudder_delta"),
+                rpm_delta=msg.get("rpm_delta"),
             )
             return {"type": "ack", "of": "set_control", "ok": ok, "ship": msg["ship"]}
 
@@ -217,6 +223,7 @@ async def websocket_endpoint(websocket: WebSocket):
         "type": "hello",
         "llm_prompts": SimulationEngine.available_prompts(),
         "llm_providers": SimulationEngine.available_providers(),
+        "vessel_classes": SimulationEngine.available_vessel_classes(),
     })
     try:
         while True:

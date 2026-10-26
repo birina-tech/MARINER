@@ -232,10 +232,10 @@ class LLMCoordinator:
                 "vessel_commands": {
                     ship.name: {
                         "rudder_deg": 0,
-                        "rpm_percent": 50,
+                        "rpm_percent": getattr(ship, 'cruise_rpm', ship.rpm_cmd),
                         "reasoning": "No threats"
                     }
-                    for ship in ships
+                    for ship in ships if getattr(ship, 'llm_controlled', False)
                 }
             }
 
@@ -243,7 +243,8 @@ class LLMCoordinator:
         user_message = (
             f"Coordinate maneuvers for all vessels based on this analysis:\n\n"
             f"{table_text}\n\n"
-            f"Generate commands for ALL vessels listed above. "
+            f"Generate commands ONLY for vessels with llm_controlled true; the others are "
+            f"traffic you cannot command. "
             f"For autopilot ships use course_deg or resume_route. "
             f"For manual ships use rudder_deg and rpm_percent."
         )
@@ -276,10 +277,10 @@ class LLMCoordinator:
                 "vessel_commands": {
                     ship.name: {
                         "rudder_deg": 0,
-                        "rpm_percent": 50,
+                        "rpm_percent": ship.rpm_cmd,
                         "reasoning": f"LLM Error: {error_msg[:50]}"
                     }
-                    for ship in ships
+                    for ship in ships if getattr(ship, 'llm_controlled', False)
                 }
             }
 
@@ -305,9 +306,10 @@ class LLMCoordinator:
             return
 
         for ship in ships:
+            if not getattr(ship, 'llm_controlled', False):
+                continue   # only vessels in LLM mode may be commanded by the LLM
             if ship.name not in vessel_commands:
-                if getattr(ship, 'llm_controlled', False):
-                    print(f"Warning: {ship.name} not found in LLM commands")
+                print(f"Warning: {ship.name} not found in LLM commands")
                 continue
 
             cmd = vessel_commands[ship.name]

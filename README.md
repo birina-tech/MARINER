@@ -17,6 +17,7 @@ The **MARINER Project** is an interactive simulation framework that leverages *L
 ## Features
 
 - Browser-based interactive simulation: HTML5 canvas with pan, zoom, vessel trails and live COLREGs table
+- Five vessel classes (harbor tug to VLCC), laden or in ballast, with size- and weight-dependent dynamics
 - Four vessel control modes: straight, path following, keyboard (manual), and LLM
 - Global swarm coordination modeled as LLM-guided coordination, with a selectable system prompt
 - Universal LLM integration: DeepSeek, OpenAI, Anthropic, Groq, OpenRouter, Hugging Face Inference, and local models via Ollama (local use only)
@@ -30,12 +31,34 @@ The **MARINER Project** is an interactive simulation framework that leverages *L
 
 Vessel motion is modeled with the first-order **Nomoto** model, a widely accepted representation of the yaw dynamics of marine vessels. Control inputs are human-readable:
 
-- **Rudder angle**: commanded in degrees (±35°). LLM commands change the rudder by at most 5° per step.
+- **Rudder angle**: commanded in degrees (±35°), moving at a limited rate. LLM commands change the order by at most 5° per step.
 - **Engine RPM**: commanded as a percentage of maximum thrust.
 
 ### Risk Assessment & COLREGs
 
 Collision risk combines three parameters: *DCPA* (distance at the closest point of approach), *TCPA* (time to the closest point of approach), and the current distance between vessels. Based on relative bearings and risk, the `colreg_rules.py` module classifies each pair of vessels into a specific COLREGs situation (head-on, overtaking, crossing, or emergency) and assigns give-way / stand-on roles. These results are passed to the LLM to guide its decisions. Thresholds are defined in `rules_settings.py`.
+
+### Vessel Classes, Size and Weight
+
+Each vessel is created from a class and a loading condition (laden or ballast). Class presets give length, beam, draft, block coefficient, installed power, maximum speed and maneuvering coefficients; displacement is derived from the hull geometry, so size and weight stay consistent.
+
+| Class | Length | Laden displacement | Max speed |
+|-------|--------|--------------------|-----------|
+| Harbor tug | 40 m | ~1,000 t | 12 kn |
+| Coastal cargo ship | 100 m | ~7,800 t | 12 kn |
+| Panamax bulk carrier | 230 m | ~72,000 t | 14 kn |
+| Large container ship | 366 m | ~180,000 t | 22 kn |
+| VLCC tanker | 330 m | ~354,000 t | 15 kn |
+
+What this changes in the simulation:
+
+- **Turning** scales with ship length and speed (nonlinear Nomoto yaw model, turning diameters of about 2.4 to 4.6 ship lengths at full rudder).
+- **Speed** follows from mass, engine thrust and resistance: heavy ships accelerate and stop slowly. Steady speed is proportional to RPM%, so a vessel added at 10 kn keeps 10 kn. A crash stop from service speed takes from about 0.6 min (tug) to 23 min (laden VLCC).
+- **Rudder and engine** orders move the actual rudder and engine at a limited rate. Negative RPM gives astern thrust.
+- **Hulls are drawn to scale** on the map, with a scale bar and range rings in real distances. A vessel too small to see at the current zoom is shown as a heading symbol.
+- The **autopilot's gains and wheel-over distances are derived from each vessel's dynamics** (`RouteAutopilot.auto_tune`; set it to `False` to restore the original fixed coefficients).
+
+The preset values are illustrative, chosen to be plausible and to meet the IMO maneuvering criteria as recalled in `backend/maneuvering.py`; they are not data for specific ships. Run `python tools/validate_dynamics.py` to print the turning circle, crash-stop and zig-zag trials for every class, and pass overrides (for example a different length or maximum speed) when creating a vessel to model a specific ship. Ballast changes displacement and maximum speed but not the turning characteristics.
 
 ## Vessel Control Modes
 
@@ -59,10 +82,14 @@ MARINER/
 ├── requirements.txt         # Python dependencies
 ├── WEBSOCKET_PROTOCOL.md    # Message schema between frontend and backend
 ├── Tasks/                   # Saved JSON scenarios (created automatically)
+├── tools/
+│   └── validate_dynamics.py # Prints the maneuvering trials for every vessel class
 ├── backend/
 │   ├── simulation.py        # SimulationEngine: ships, physics tick, COLREGs, LLM dispatch, scenarios
 │   ├── ship.py              # Vessel model (Nomoto dynamics)
-│   ├── autopilot.py         # Route-following autopilot
+│   ├── autopilot.py         # Route-following autopilot (gains derived from vessel dynamics)
+│   ├── vessel_spec.py       # Vessel classes: size, weight, power, maneuvering coefficients
+│   ├── maneuvering.py       # Turning circle, crash stop, zig-zag trials; IMO check
 │   ├── route.py             # Route and waypoint classes
 │   ├── collision_analyzer.py# CPA / TCPA / risk / course-crossing math
 │   ├── colreg_rules.py      # COLREGs situation classification
