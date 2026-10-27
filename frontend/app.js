@@ -36,6 +36,7 @@ let latestState = null;
 let vesselClasses = [];    // class catalogue from the server's hello message
 let vectorMinutes = 6;     // speed-vector length, minutes (0 = off)
 let fitPending = false;    // zoom to fit on the next state (after loading a scenario)
+let showReasoning = false; // draw the LLM reasoning bubbles
 const trails = new Map();  // shipName -> [[x,y], ...] (client-side, capped)
 
 // ---------------------------------------------------------------- WebSocket
@@ -459,6 +460,125 @@ function drawSpeedVector(ship) {
   ctx.globalAlpha = 1.0;
 }
 
+// -------------------------------------------------- LLM reasoning bubbles
+//
+// One bubble per vessel in LLM mode, shown when "LLM reasoning" is ticked.
+// It carries the LLM's reasoning text and the values it returned (rudder, RPM,
+// and course when given). Anything the LLM did not return shows as "--", never
+// as an invented number. Bubbles are HTML so the text wraps; the text comes
+// from the LLM, so it is only ever set with textContent, never as markup.
+
+const bubbles = new Map();   // ship name -> { el, parts, key, w, h }
+const bubbleLayer = document.getElementById("bubble-layer");
+
+const fmtDeg = (v) => (v === null || v === undefined) ? "--" : `${v > 0 ? "+" : ""}${v.toFixed(0)}°`;
+const fmtPct = (v) => (v === null || v === undefined) ? "--" : `${v.toFixed(0)}%`;
+const fmtCourse = (v) => `${String(Math.round(((v % 360) + 360) % 360)).padStart(3, "0")}°`;
+
+function makeBubble(ship) {
+  const el = document.createElement("div");
+  el.className = "bubble";
+  el.style.setProperty("--bubble-color", shipColor(ship));
+  const head = document.createElement("div"); head.className = "bubble-head";
+  const name = document.createElement("span"); name.className = "bubble-name"; name.textContent = ship.name;
+  const status = document.createElement("span"); status.className = "bubble-status";
+  head.append(name, status);
+  const text = document.createElement("div"); text.className = "bubble-text";
+  const out = document.createElement("div"); out.className = "bubble-out";
+  const rudder = document.createElement("span");
+  const rpm = document.createElement("span");
+  const course = document.createElement("span");
+  out.append(rudder, rpm, course);
+  el.append(head, text, out);
+  bubbleLayer.appendChild(el);
+  return { el, parts: { status, text, rudder, rpm, course }, key: null, w: 0, h: 0 };
+}
+
+function setOutput(span, label, value) {
+  span.textContent = `${label} `;
+  const b = document.createElement("b");
+  b.textContent = value;
+  if (value === "--") b.className = "none";
+  span.appendChild(b);
+}
+
+// Only touches the DOM (and re-measures) when the content actually changed.
+function updateBubbleContent(b, ship) {
+  const o = ship.llm_output || {};
+  let status = "";
+  if (!latestState.llm_configured) status = "not configured";
+  else if (latestState.llm_pending) status = "thinking…";
+  const key = JSON.stringify([status, o.reasoning, o.rudder_deg, o.rpm_percent, o.course_deg]);
+  if (key === b.key) return;
+  b.key = key;
+  b.parts.status.textContent = status;
+  b.parts.text.textContent = o.reasoning || "--";
+  b.parts.text.classList.toggle("none", !o.reasoning);
+  setOutput(b.parts.rudder, "Rudder", fmtDeg(o.rudder_deg));
+  setOutput(b.parts.rpm, "RPM", fmtPct(o.rpm_percent));
+  const hasCourse = o.course_deg !== null && o.course_deg !== undefined;
+  b.parts.course.style.display = hasCourse ? "" : "none";
+  if (hasCourse) setOutput(b.parts.course, "Course", fmtCourse(o.course_deg));
+  b.w = b.el.offsetWidth;
+  b.h = b.el.offsetHeight;
+}
+
+function clearBubbles() {
+  for (const b of bubbles.values()) b.el.remove();
+  bubbles.clear();
+}
+
+// Place the bubbles next to their vessels and return where they ended up, so the
+// canvas can draw a connector line from each vessel to its bubble.
+function layoutBubbles(w, h) {
+  const placements = [];
+  if (!showReasoning || !latestState) { clearBubbles(); return placements; }
+
+  const live = new Set();
+  const items = [];
+  for (const ship of latestState.ships) {
+    if (ship.control_mode !== "llm") continue;
+    live.add(ship.name);
+    let b = bubbles.get(ship.name);
+    if (!b) { b = makeBubble(ship); bubbles.set(ship.name, b); }
+    updateBubbleContent(b, ship);
+    const [sx, sy] = worldToScreen(ship.x, ship.y);
+    if (sx < -20 || sx > w + 20 || sy < -20 || sy > h + 20) { b.el.style.display = "none"; continue; }  // off screen
+    items.push({ ship, b, sx, sy });
+  }
+  for (const [name, b] of Array.from(bubbles.entries())) {
+    if (!live.has(name)) { b.el.remove(); bubbles.delete(name); }
+  }
+
+  const placed = [];
+  for (const { ship, b, sx, sy } of items) {
+    const gap = Math.max(14, ship.length * view.scale / 2 + 8);
+    let dir = -1;                                   // -1: above the vessel, +1: below it
+    let x = sx + gap;
+    let y = sy - 30 - b.h;
+    if (x + b.w > w - 4) x = sx - gap - b.w;        // near the right edge: put it on the left
+    if (y < 4) { y = sy + 30; dir = 1; }            // near the top edge: put it below
+    x = Math.max(4, Math.min(x, w - b.w - 4));
+    // Nudge away from bubbles already placed, so nearby vessels don't hide each other.
+    for (let tries = 0; tries < 12; tries++) {
+      const hit = placed.find(p => x < p.x + p.w + 4 && x + b.w + 4 > p.x && y < p.y + p.h + 4 && y + b.h + 4 > p.y);
+      if (!hit) break;
+      y = dir < 0 ? hit.y - b.h - 6 : hit.y + hit.h + 6;
+    }
+    y = Math.max(4, Math.min(y, h - b.h - 4));
+    placed.push({ x, y, w: b.w, h: b.h });
+    b.el.style.display = "";
+    b.el.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)`;
+    // connector ends at the point of the bubble closest to the vessel
+    placements.push({
+      ship, sx, sy,
+      ax: Math.max(x, Math.min(sx, x + b.w)),
+      ay: Math.max(y, Math.min(sy, y + b.h)),
+    });
+  }
+  return placements;
+}
+
 function drawRangeRingsAndScale(w, h) {
   const [cx, cy] = worldToScreen(view.cx, view.cy);
   const maxPx = Math.min(w, h) / 2 - 10;
@@ -538,6 +658,17 @@ function draw() {
       i === 0 ? ctx.moveTo(sx, sy) : ctx.lineTo(sx, sy);
     });
     ctx.stroke();
+    ctx.globalAlpha = 1.0;
+  }
+
+  // LLM reasoning bubbles: connector lines here (under the hulls), the bubbles themselves are HTML
+  for (const p of layoutBubbles(w, h)) {
+    ctx.strokeStyle = shipColor(p.ship);
+    ctx.globalAlpha = 0.55;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath(); ctx.moveTo(p.sx, p.sy); ctx.lineTo(p.ax, p.ay); ctx.stroke();
+    ctx.setLineDash([]);
     ctx.globalAlpha = 1.0;
   }
 
@@ -700,6 +831,18 @@ document.getElementById("control-mode-select").addEventListener("change", (e) =>
 
 document.getElementById("vector-select").addEventListener("change", (e) => {
   vectorMinutes = parseFloat(e.target.value);
+});
+
+document.getElementById("show-reasoning").addEventListener("change", (e) => {
+  showReasoning = e.target.checked;
+  if (!showReasoning) clearBubbles();
+});
+
+// After choosing from a dropdown or ticking a box, hand the keyboard back to the page.
+// Otherwise the arrow keys keep acting on that control (they would cycle the Mode
+// dropdown instead of steering a vessel that was just put in Manual mode).
+document.querySelectorAll("select, input[type=checkbox]").forEach((el) => {
+  el.addEventListener("change", () => el.blur());
 });
 
 // ---------------------------------------------------------- route drawing

@@ -182,6 +182,8 @@ class SimulationEngine:
             ship.autopilot_enabled = False
             ship.llm_controlled = True
             ship.control_mode = 'llm'
+            ship.llm_decision = None      # nothing decided yet: the GUI shows '--'
+            ship.llm_reasoning = ""
             return True, None
 
         # 'straight'
@@ -466,6 +468,39 @@ class SimulationEngine:
 
     # ------------------------------------------------------------- output
 
+    @staticmethod
+    def _llm_output(ship):
+        """What the LLM last said for this vessel, for the GUI's reasoning bubble.
+
+        None for vessels not in LLM mode. Otherwise the reasoning text and the
+        values the LLM actually returned (rudder, RPM, and course if given).
+        A value the LLM did not return, or that is not a number, is None, so
+        the GUI shows '--' instead of inventing a number."""
+        if not ship.llm_controlled:
+            return None
+        decision = ship.llm_decision if isinstance(ship.llm_decision, dict) else None
+
+        def number(key):
+            value = decision.get(key) if decision else None
+            if isinstance(value, bool):
+                return None
+            try:
+                value = float(value)
+            except (TypeError, ValueError):
+                return None
+            return value if math.isfinite(value) else None
+
+        text = (decision.get('reasoning') if decision else None) or ship.llm_reasoning or ''
+        text = str(text).strip()
+        if len(text) > 400:
+            text = text[:397] + '...'
+        return {
+            'reasoning': text or None,
+            'rudder_deg': number('rudder_deg'),
+            'rpm_percent': number('rpm_percent'),
+            'course_deg': number('course_deg'),
+        }
+
     def serialize_state(self, pairs):
         """The payload broadcast to every connected browser each tick."""
         ships_out = []
@@ -498,6 +533,7 @@ class SimulationEngine:
                 'control_mode': ship.control_mode,
                 'has_route': ship.assigned_route is not None,
                 'llm_status_text': ship.get_llm_status_text(),
+                'llm_output': self._llm_output(ship),
                 # world-space hull polygon — frontend just draws this, no
                 # rotation math needed client-side
                 'hull': ship.get_pentagon_vertices().tolist(),

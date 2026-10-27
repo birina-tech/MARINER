@@ -23,19 +23,21 @@
     </div>
     <div id="sim-controls">
       <button id="btn-play-pause">▶ Run</button>
-      <label>dt <input id="dt-input" type="number" step="0.1" min="0.1" value="1.0"></label>
+      <label>dt <input id="dt-input" type="number" step="0.05" min="0.05" value="1.0" title="Simulated seconds per 50 ms tick (0.05 = real time)"></label>
       <label>Vector <select id="vector-select">
         <option value="0">off</option>
         <option value="3">3 min</option>
         <option value="6" selected>6 min</option>
         <option value="12">12 min</option>
       </select></label>
+      <label class="check" title="Show what the LLM said for each vessel in LLM mode"><input id="show-reasoning" type="checkbox"> LLM reasoning</label>
     </div>
   </header>
 
   <main>
     <div id="plot-wrap">
       <canvas id="plot"></canvas>
+      <div id="bubble-layer"></div>
       <button id="btn-fit" class="plot-btn" title="Zoom to fit all vessels">⌖ Fit</button>
       <div id="hint">Right-click: add vessel &nbsp;•&nbsp; Left-click a hull: select &nbsp;•&nbsp; Drag: pan &nbsp;•&nbsp; Wheel: zoom</div>
     </div>

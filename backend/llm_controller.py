@@ -353,7 +353,7 @@ class LLMCoordinator:
                 continue
 
             rudder = cmd.get("rudder_deg", 0)
-            rpm = cmd.get("rpm_percent", 50)
+            rpm = cmd.get("rpm_percent", ship.rpm_cmd)   # not given: keep the current order
 
             rudder = np.clip(rudder, -35, 35)
             rpm = np.clip(rpm, 0, 100)

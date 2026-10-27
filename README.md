@@ -143,7 +143,9 @@ Open http://localhost:7860 in a browser.
 - **Zoom**: mouse wheel.
 - **Add vessel**: right-click an empty spot on the map and enter name, course and speed.
 - **Select vessel**: left-click it on the map, or click its name in the Vessels list.
-- **Run / Pause**: button in the top bar. The `dt` field sets how many simulated seconds pass per step (default 1.0).
+- **Run / Pause**: button in the top bar. The `dt` field sets how many simulated seconds pass per 50 ms tick (default 1.0, so the simulation runs 20 times faster than real time; 0.05 is real time).
+- **Vector**: draws, for each vessel, a line showing where it will be in 3, 6 or 12 minutes at its current heading and speed, with a tick every minute. It is a display option only and does not affect the simulation.
+- **LLM reasoning**: tick this box to show a bubble next to each vessel in LLM mode with the LLM's reasoning and the values it returned (rudder, RPM, and course if given). A value the LLM did not return shows as `--`.
 
 ### Scenarios
 

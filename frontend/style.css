@@ -61,7 +61,9 @@ html, body {
 
 #sim-controls { margin-left: auto; display: flex; align-items: center; gap: 12px; }
 #sim-controls label { color: var(--text-dim); display: flex; align-items: center; gap: 6px; }
-#sim-controls input[type="number"] { width: 56px; }
+#sim-controls input[type="number"] { width: 92px; }   /* room for the digits and the spinner arrows */
+#sim-controls label.check { cursor: pointer; }
+input[type="checkbox"] { padding: 0; width: auto; }
 
 button, select, input {
   font-family: var(--font-mono);
@@ -201,3 +203,50 @@ tr.risk-med td { color: var(--amber); }
 .vessel-sub { font-size: 10px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .row select { flex: 2; min-width: 0; }
+
+/* ---------- LLM reasoning bubbles (HTML over the map) ---------- */
+
+#bubble-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;        /* never block panning, clicking or right-click */
+}
+
+.bubble {
+  position: absolute;
+  left: 0;
+  top: 0;
+  min-width: 150px;
+  max-width: 270px;
+  padding: 6px 9px 7px;
+  font-size: 11px;
+  line-height: 1.4;
+  background: rgba(9, 22, 20, 0.94);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--bubble-color, var(--sweep-green));
+  border-radius: 8px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.55);
+  will-change: transform;
+}
+.bubble-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 3px;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+.bubble-name { color: var(--bubble-color, var(--sweep-green)); font-weight: 700; }
+.bubble-text { color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
+.bubble-text.none { color: var(--text-dim); }
+.bubble-out {
+  display: flex;
+  gap: 14px;
+  margin-top: 5px;
+  padding-top: 4px;
+  border-top: 1px solid var(--line);
+  color: var(--text-dim);
+}
+.bubble-out b { color: var(--text); font-weight: 600; }
+.bubble-out b.none { color: var(--text-dim); font-weight: 400; }
